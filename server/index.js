@@ -46,16 +46,6 @@ const WRONG_BOOK_FILE = path.join(DOCS_DIR, '错题本.md')
 app.use(cors())
 app.use(express.json({ limit: '10mb' }))
 
-// 生产环境下 serve 前端静态文件
-if (IS_PROD) {
-  const distPath = path.resolve(__dirname, '../dist')
-  app.use(express.static(distPath))
-  // SPA 支持：所有非 API 路由返回 index.html
-  app.get('*', (_req, res) => {
-    res.sendFile(path.join(distPath, 'index.html'))
-  })
-}
-
 // ============ 工具函数 ============
 
 /** 解析 MD 表格行，返回单元格数组 */
@@ -618,6 +608,18 @@ app.get('/api/wrong-book/status', async (req, res) => {
     res.status(500).json({ error: '获取错题本状态失败: ' + error.message })
   }
 })
+
+// ============ 生产环境：静态文件服务 ============
+// 必须在所有 API 路由之后注册，避免拦截 API 请求
+
+if (IS_PROD) {
+  const distPath = path.resolve(__dirname, '../dist')
+  app.use(express.static(distPath))
+  // SPA 支持：所有非 API 路由返回 index.html
+  app.use((_req, res) => {
+    res.sendFile(path.join(distPath, 'index.html'))
+  })
+}
 
 // ============ 启动服务 ============
 
