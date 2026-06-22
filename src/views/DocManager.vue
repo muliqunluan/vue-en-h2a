@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { marked } from 'marked'
-import { getDocs, translateDoc, revertDoc, batchTranslate, getDocContent, updateWrongBook, getWrongBookStatus } from '@/api'
+import { getDocs, translateDoc, revertDoc, batchTranslate, getDocContent, updateWrongBook, getWrongBookStatus, getWrongBookContent } from '@/api'
 import type { DocGroup, DocInfo } from '@/api'
 
 const groups = ref<DocGroup[]>([])
@@ -33,6 +33,22 @@ const renderedContent = computed(() => {
 const wrongBookUpdating = ref(false)
 const wrongBookStatus = ref<{ exists: boolean; count: number }>({ exists: false, count: 0 })
 const wrongBookMessage = ref('')
+const wrongBookIsError = ref(false)
+
+// 错题本预览
+const wrongBookPreview = ref(false)
+const wrongBookContent = ref('')
+const wrongBookLoading = ref(false)
+
+// 错题本渲染后的 HTML
+const renderedWrongBookContent = computed(() => {
+  if (!wrongBookContent.value) return ''
+  try {
+    return marked.parse(wrongBookContent.value) as string
+  } catch {
+    return wrongBookContent.value
+  }
+})
 
 // 加载文档列表
 async function loadDocs() {
@@ -135,14 +151,37 @@ async function handleUpdateWrongBook() {
     if (wrongBookUpdating.value) return
     wrongBookUpdating.value = true
     wrongBookMessage.value = ''
+    wrongBookIsError.value = false
     try {
         const result = await updateWrongBook()
         wrongBookMessage.value = result.message
         await loadWrongBookStatus()
     } catch (err: any) {
-        wrongBookMessage.value = `❌ ${err.message}`
+        wrongBookMessage.value = err.message
+        wrongBookIsError.value = true
     } finally {
         wrongBookUpdating.value = false
+    }
+}
+
+// 查看错题本
+async function handleViewWrongBook() {
+    if (wrongBookPreview.value) {
+        // 切换关闭
+        wrongBookPreview.value = false
+        wrongBookContent.value = ''
+        return
+    }
+
+    wrongBookLoading.value = true
+    wrongBookPreview.value = true
+    try {
+        const data = await getWrongBookContent()
+        wrongBookContent.value = data.content
+    } catch (err: any) {
+        wrongBookContent.value = `加载失败: ${err.message}`
+    } finally {
+        wrongBookLoading.value = false
     }
 }
 
@@ -165,11 +204,11 @@ onMounted(() => {
 <template>
     <div class="doc-manager">
         <header class="header">
-            <h1>📂 单词记录文档</h1>
+            <h1>单词记录</h1>
             <nav class="nav">
-                <router-link to="/input" class="nav-link">✏️ 录入单词</router-link>
+                <router-link to="/input" class="nav-link">录入单词</router-link>
                 <button class="btn btn-refresh" :disabled="loading" @click="loadDocs">
-                    {{ loading ? '⏳ 加载中...' : '🔄 刷新' }}
+                    {{ loading ? '加载中...' : '刷新' }}
                 </button>
             </nav>
         </header>
@@ -177,18 +216,29 @@ onMounted(() => {
         <!-- 错题本区域 -->
         <div class="wrong-book-section">
             <div class="wrong-book-info">
-                <span class="wrong-book-title">📖 错题本</span>
+                <span class="wrong-book-title">错题本</span>
                 <span v-if="wrongBookStatus.exists" class="wrong-book-count">
                     共 {{ wrongBookStatus.count }} 道错题
                 </span>
                 <span v-else class="wrong-book-count">暂无错题</span>
             </div>
-            <button class="btn btn-wrong-book" :disabled="wrongBookUpdating" @click="handleUpdateWrongBook">
-                {{ wrongBookUpdating ? '⏳ 生成中...' : '📝 生成/更新错题本' }}
-            </button>
+            <div class="wrong-book-actions">
+                <button v-if="wrongBookStatus.exists" class="btn btn-view-wrong-book" @click="handleViewWrongBook">
+                    {{ wrongBookPreview ? '收起' : '查看错题本' }}
+                </button>
+                <button class="btn btn-wrong-book" :disabled="wrongBookUpdating" @click="handleUpdateWrongBook">
+                    {{ wrongBookUpdating ? '生成中...' : '生成错题本' }}
+                </button>
+            </div>
         </div>
-        <div v-if="wrongBookMessage" class="wrong-book-message" :class="{ error: wrongBookMessage.includes('❌') }">
+        <div v-if="wrongBookMessage" class="wrong-book-message" :class="{ error: wrongBookIsError }">
             {{ wrongBookMessage }}
+        </div>
+
+        <!-- 错题本预览 -->
+        <div v-if="wrongBookPreview" class="wrong-book-preview">
+            <div v-if="wrongBookLoading" class="preview-loading">加载中...</div>
+            <div v-else class="preview-content markdown-body" v-html="renderedWrongBookContent"></div>
         </div>
 
         <!-- 错误提示 -->
@@ -203,7 +253,7 @@ onMounted(() => {
 
         <!-- 空状态 -->
         <div v-else-if="groups.length === 0" class="empty">
-            <p>📭 暂无文档记录</p>
+            <p>暂无文档记录</p>
             <router-link to="/input" class="btn btn-primary">去录入单词</router-link>
         </div>
 
@@ -217,7 +267,7 @@ onMounted(() => {
                     </div>
                     <button v-if="groupNeedsProcessing(group.items)" class="btn btn-batch"
                         :disabled="batchProcessingDays.has(group.day)" @click="handleBatchTranslate(group.day)">
-                        {{ batchProcessingDays.has(group.day) ? '⏳ 处理中...' : '🤖 批量处理' }}
+                        {{ batchProcessingDays.has(group.day) ? '处理中...' : '批量处理' }}
                     </button>
                 </div>
 
@@ -234,11 +284,11 @@ onMounted(() => {
                             </button>
                             <button v-if="needsProcessing(doc)" class="btn btn-sm btn-ai"
                                 :disabled="processingFiles.has(doc.fileName)" @click="handleTranslate(doc)">
-                                {{ processingFiles.has(doc.fileName) ? '⏳' : '🤖 AI 翻译' }}
+                                {{ processingFiles.has(doc.fileName) ? '处理中' : 'AI 翻译' }}
                             </button>
                             <button v-else class="btn btn-sm btn-revert" :disabled="revertingFiles.has(doc.fileName)"
                                 @click="handleRevert(doc)">
-                                {{ revertingFiles.has(doc.fileName) ? '⏳' : '↩️ 还原' }}
+                                {{ revertingFiles.has(doc.fileName) ? '处理中' : '还原' }}
                             </button>
                         </div>
                     </div>
@@ -270,7 +320,10 @@ onMounted(() => {
 
 .header h1 {
     margin: 0;
-    font-size: 24px;
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+    color: var(--color-text-primary, #1c1c1e);
 }
 
 .nav {
@@ -280,28 +333,29 @@ onMounted(() => {
 }
 
 .nav-link {
-    color: #4a90d9;
+    color: var(--color-accent-blue, #007aff);
     text-decoration: none;
-    font-size: 16px;
+    font-size: 15px;
     padding: 8px 16px;
-    border-radius: 6px;
+    border-radius: var(--radius-pill, 999px);
     transition: background 0.2s;
+    font-weight: 500;
 }
 
 .nav-link:hover {
-    background: #f0f4ff;
+    background: var(--color-bg-secondary, #f2f2f7);
 }
 
-/* 错题本 */
+/* ===== 错题本 (Apple 风格) ===== */
 .wrong-book-section {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 12px 16px;
-    background: #fff3e0;
-    border: 1px solid #ffe0b2;
-    border-radius: 8px;
-    margin-bottom: 8px;
+    padding: 14px 18px;
+    background: #fef7f0;
+    border: 1px solid #f0dcc8;
+    border-radius: var(--radius-lg, 14px);
+    margin-bottom: 10px;
 }
 
 .wrong-book-info {
@@ -311,59 +365,87 @@ onMounted(() => {
 }
 
 .wrong-book-title {
-    font-size: 15px;
-    font-weight: bold;
-    color: #e65100;
+    font-size: 16px;
+    font-weight: 600;
+    color: #c0601a;
 }
 
 .wrong-book-count {
     font-size: 13px;
-    color: #bf360c;
+    color: #a0500a;
 }
 
 .wrong-book-message {
-    padding: 8px 16px;
+    padding: 10px 16px;
     font-size: 13px;
-    color: #2e7d32;
-    background: #e8f5e9;
-    border-radius: 6px;
+    color: var(--color-accent-green, #34c759);
+    background: #f0faf0;
+    border-radius: var(--radius-md, 12px);
     margin-bottom: 12px;
 }
 
 .wrong-book-message.error {
-    color: #c62828;
-    background: #fbe9e7;
+    color: var(--color-accent-red, #ff3b30);
+    background: #fcf0f0;
 }
 
 .btn-wrong-book {
     background: #ffcc02;
     color: #333;
-    border-color: #ffb300;
-    font-weight: bold;
+    border: none;
+    font-weight: 600;
+    border-radius: var(--radius-pill, 999px);
 }
 
 .btn-wrong-book:hover:not(:disabled) {
     background: #ffb300;
 }
 
+.wrong-book-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.btn-view-wrong-book {
+    background: #e8f0fe;
+    color: var(--color-accent-blue, #007aff);
+    border: none;
+    font-weight: 600;
+    border-radius: var(--radius-pill, 999px);
+}
+
+.btn-view-wrong-book:hover:not(:disabled) {
+    background: #d0e0fc;
+}
+
+.wrong-book-preview {
+    margin-bottom: 12px;
+    padding: 14px;
+    background: var(--color-bg-secondary, #f2f2f7);
+    border: 1px solid var(--color-border, #e5e5ea);
+    border-radius: var(--radius-md, 12px);
+}
+
 .error-banner {
     padding: 12px 16px;
-    background: #fbe9e7;
-    color: #c62828;
-    border-radius: 8px;
+    background: #fcf0f0;
+    color: var(--color-accent-red, #ff3b30);
+    border-radius: var(--radius-md, 12px);
     margin-bottom: 16px;
+    font-size: 14px;
 }
 
 .loading {
     text-align: center;
     padding: 48px;
-    color: #999;
+    color: var(--color-text-secondary, #8e8e93);
 }
 
 .empty {
     text-align: center;
     padding: 48px;
-    color: #999;
+    color: var(--color-text-secondary, #8e8e93);
 }
 
 .empty p {
@@ -371,21 +453,23 @@ onMounted(() => {
     margin-bottom: 16px;
 }
 
-/* 分组 */
+/* ===== 分组 (Apple 风格) ===== */
 .group {
-    margin-bottom: 24px;
-    border: 1px solid #e0e0e0;
-    border-radius: 10px;
+    margin-bottom: 20px;
+    border: 1px solid var(--color-border, #e5e5ea);
+    border-radius: var(--radius-lg, 14px);
     overflow: hidden;
+    background: var(--color-bg, #ffffff);
+    box-shadow: var(--shadow-sm, 0 1px 3px rgba(0,0,0,0.04));
 }
 
 .group-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 12px 16px;
-    background: #f8f9fa;
-    border-bottom: 1px solid #e0e0e0;
+    padding: 14px 18px;
+    background: var(--color-bg-secondary, #f2f2f7);
+    border-bottom: 1px solid var(--color-border, #e5e5ea);
 }
 
 .group-title {
@@ -395,51 +479,56 @@ onMounted(() => {
 }
 
 .group-day {
-    font-size: 18px;
-    font-weight: bold;
-    color: #333;
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--color-text-primary, #1c1c1e);
 }
 
 .group-count {
     font-size: 13px;
-    color: #999;
+    color: var(--color-text-secondary, #8e8e93);
 }
 
-/* 文档列表 */
+/* ===== 文档列表 ===== */
 .doc-list {
-    padding: 8px;
+    padding: 4px 0;
 }
 
 .doc-item {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 10px 12px;
-    border-radius: 6px;
-    transition: background 0.2s;
+    padding: 12px 18px;
+    transition: background 0.15s;
+    border-bottom: 1px solid var(--color-border, #e5e5ea);
+}
+
+.doc-item:last-child {
+    border-bottom: none;
 }
 
 .doc-item:hover {
-    background: #f5f5f5;
+    background: var(--color-bg-secondary, #f2f2f7);
 }
 
 .doc-info {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
 }
 
 .doc-name {
     font-size: 14px;
-    color: #333;
-    font-family: 'Courier New', monospace;
+    color: var(--color-text-primary, #1c1c1e);
+    font-family: 'SF Mono', 'Courier New', monospace;
 }
 
 .doc-badge {
-    font-size: 11px;
-    padding: 2px 6px;
-    border-radius: 4px;
-    font-weight: bold;
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: var(--radius-pill, 999px);
+    font-weight: 600;
+    letter-spacing: 0.3px;
 }
 
 .badge-ai {
@@ -457,40 +546,48 @@ onMounted(() => {
     gap: 6px;
 }
 
-/* 按钮 */
+/* ===== 按钮 (Apple 风格) ===== */
 .btn {
-    padding: 8px 16px;
-    border: 1px solid #ddd;
-    border-radius: 6px;
+    padding: 8px 18px;
+    border: 1px solid var(--color-border, #e5e5ea);
+    border-radius: var(--radius-pill, 999px);
     font-size: 13px;
+    font-weight: 500;
     cursor: pointer;
-    background: white;
+    background: var(--color-bg, #ffffff);
     transition: all 0.2s;
+    font-family: var(--font-stack, -apple-system, sans-serif);
+    min-height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .btn:hover {
-    border-color: #bbb;
+    background: var(--color-bg-secondary, #f2f2f7);
 }
 
 .btn:disabled {
-    opacity: 0.6;
+    opacity: 0.5;
     cursor: not-allowed;
 }
 
 .btn-sm {
-    padding: 4px 10px;
+    padding: 4px 14px;
     font-size: 12px;
+    min-height: 30px;
 }
 
 .btn-primary {
-    background: #4a90d9;
+    background: var(--color-accent-blue, #007aff);
     color: white;
-    border-color: #4a90d9;
+    border-color: var(--color-accent-blue, #007aff);
     text-decoration: none;
+    border-radius: var(--radius-pill, 999px);
 }
 
 .btn-primary:hover {
-    background: #357abd;
+    background: #0066d6;
 }
 
 .btn-ai {
@@ -514,31 +611,37 @@ onMounted(() => {
 }
 
 .btn-batch {
-    background: #e3f2fd;
-    color: #1565c0;
-    border-color: #bbdefb;
+    background: #e8f0fe;
+    color: var(--color-accent-blue, #007aff);
+    border-color: #c8d8fc;
+    font-weight: 500;
 }
 
 .btn-batch:hover:not(:disabled) {
-    background: #bbdefb;
+    background: #d0e0fc;
 }
 
 .btn-refresh {
-    background: #f5f5f5;
+    background: var(--color-bg-secondary, #f2f2f7);
+    border: none;
 }
 
-/* 预览 */
+.btn-refresh:hover {
+    background: var(--color-bg-tertiary, #e5e5ea);
+}
+
+/* ===== 预览 ===== */
 .preview-area {
-    margin: 8px 12px 12px;
-    padding: 12px;
-    background: #fafafa;
-    border: 1px solid #e0e0e0;
-    border-radius: 6px;
+    margin: 8px 14px 14px;
+    padding: 14px;
+    background: var(--color-bg-secondary, #f2f2f7);
+    border: 1px solid var(--color-border, #e5e5ea);
+    border-radius: var(--radius-md, 12px);
 }
 
 .preview-loading {
     text-align: center;
-    color: #999;
+    color: var(--color-text-secondary, #8e8e93);
     padding: 16px;
 }
 
@@ -548,18 +651,20 @@ onMounted(() => {
     margin: 0;
 }
 
-/* Markdown 渲染样式 */
+/* ===== Markdown 渲染样式 ===== */
 .markdown-body {
     font-size: 14px;
     line-height: 1.7;
-    color: #333;
+    color: var(--color-text-primary, #1c1c1e);
 }
 
 .markdown-body h1,
 .markdown-body h2,
 .markdown-body h3 {
     margin: 16px 0 8px;
-    color: #1a1a1a;
+    color: var(--color-text-primary, #1c1c1e);
+    font-weight: 600;
+    letter-spacing: -0.2px;
 }
 
 .markdown-body h1 { font-size: 20px; }
@@ -583,32 +688,32 @@ onMounted(() => {
 
 .markdown-body th,
 .markdown-body td {
-    border: 1px solid #ddd;
+    border: 1px solid var(--color-border, #e5e5ea);
     padding: 6px 10px;
     text-align: left;
 }
 
 .markdown-body th {
-    background: #f0f0f0;
+    background: var(--color-bg-secondary, #f2f2f7);
     font-weight: 600;
 }
 
 .markdown-body tr:nth-child(even) {
-    background: #f9f9f9;
+    background: #fafafa;
 }
 
 .markdown-body code {
-    background: #f0f0f0;
+    background: var(--color-bg-secondary, #f2f2f7);
     padding: 2px 6px;
-    border-radius: 3px;
+    border-radius: 4px;
     font-size: 13px;
-    font-family: 'Courier New', monospace;
+    font-family: 'SF Mono', 'Courier New', monospace;
 }
 
 .markdown-body pre {
-    background: #f5f5f5;
+    background: var(--color-bg-secondary, #f2f2f7);
     padding: 12px;
-    border-radius: 6px;
+    border-radius: var(--radius-md, 12px);
     overflow-x: auto;
 }
 
@@ -628,7 +733,7 @@ onMounted(() => {
 }
 
 .markdown-body a {
-    color: #4a90d9;
+    color: var(--color-accent-blue, #007aff);
     text-decoration: none;
 }
 
@@ -640,13 +745,11 @@ onMounted(() => {
    移动端适配 - DocManager
    ======================================== */
 
-/* 小屏手机 (<480px) */
 @media (max-width: 480px) {
     .doc-manager {
         padding: 12px;
     }
 
-    /* --- Header --- */
     .header {
         flex-direction: column;
         align-items: flex-start;
@@ -655,7 +758,7 @@ onMounted(() => {
     }
 
     .header h1 {
-        font-size: 20px;
+        font-size: 22px;
     }
 
     .nav {
@@ -666,20 +769,19 @@ onMounted(() => {
 
     .nav-link {
         font-size: 14px;
-        padding: 6px 12px;
+        padding: 6px 14px;
     }
 
     .btn-refresh {
-        padding: 6px 12px;
+        padding: 6px 14px;
         font-size: 13px;
     }
 
-    /* --- 错题本区域 --- */
     .wrong-book-section {
         flex-direction: column;
         align-items: flex-start;
-        gap: 8px;
-        padding: 10px 14px;
+        gap: 10px;
+        padding: 12px 14px;
     }
 
     .wrong-book-info {
@@ -695,6 +797,13 @@ onMounted(() => {
         font-size: 12px;
     }
 
+    .wrong-book-actions {
+        width: 100%;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .btn-view-wrong-book,
     .btn-wrong-book {
         width: 100%;
         text-align: center;
@@ -702,22 +811,26 @@ onMounted(() => {
         font-size: 14px;
     }
 
-    .wrong-book-message {
-        font-size: 12px;
-        padding: 6px 12px;
+    .wrong-book-preview {
+        padding: 10px;
+        margin-bottom: 8px;
     }
 
-    /* --- 分组 --- */
+    .wrong-book-message {
+        font-size: 12px;
+        padding: 8px 12px;
+    }
+
     .group {
         margin-bottom: 16px;
-        border-radius: 8px;
+        border-radius: var(--radius-md, 12px);
     }
 
     .group-header {
         flex-direction: column;
         align-items: flex-start;
         gap: 8px;
-        padding: 10px 14px;
+        padding: 12px 14px;
     }
 
     .group-title {
@@ -740,16 +853,15 @@ onMounted(() => {
         font-size: 13px;
     }
 
-    /* --- 文档项 --- */
     .doc-list {
-        padding: 6px;
+        padding: 0;
     }
 
     .doc-item {
         flex-direction: column;
         align-items: flex-start;
         gap: 8px;
-        padding: 10px 12px;
+        padding: 12px 14px;
     }
 
     .doc-info {
@@ -760,7 +872,6 @@ onMounted(() => {
 
     .doc-name {
         font-size: 13px;
-        max-width: 100%;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
@@ -770,7 +881,7 @@ onMounted(() => {
 
     .doc-badge {
         font-size: 10px;
-        padding: 1px 5px;
+        padding: 1px 6px;
     }
 
     .doc-actions {
@@ -780,16 +891,15 @@ onMounted(() => {
     }
 
     .btn-sm {
-        padding: 6px 12px;
+        padding: 6px 14px;
         font-size: 12px;
         min-height: 36px;
         flex: 1;
         text-align: center;
     }
 
-    /* --- 预览 --- */
     .preview-area {
-        margin: 6px 6px 10px;
+        margin: 6px 8px 10px;
         padding: 10px;
     }
 
@@ -799,7 +909,6 @@ onMounted(() => {
         line-height: 1.5;
     }
 
-    /* --- 空状态 --- */
     .empty {
         padding: 32px 16px;
     }
@@ -813,7 +922,6 @@ onMounted(() => {
         font-size: 14px;
     }
 
-    /* --- 加载 --- */
     .loading {
         padding: 32px;
         font-size: 14px;
@@ -825,14 +933,13 @@ onMounted(() => {
     }
 }
 
-/* 中屏手机 (480px-600px) */
 @media (min-width: 481px) and (max-width: 600px) {
     .doc-manager {
         padding: 16px;
     }
 
     .header h1 {
-        font-size: 22px;
+        font-size: 24px;
     }
 
     .doc-item {
@@ -855,7 +962,7 @@ onMounted(() => {
     }
 
     .group-header {
-        padding: 10px 14px;
+        padding: 12px 14px;
     }
 }
 </style>

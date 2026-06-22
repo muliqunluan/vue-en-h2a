@@ -766,6 +766,36 @@ app.get('/api/wrong-book/status', async (req, res) => {
   }
 })
 
+/**
+ * 获取当前用户错题本内容
+ * GET /api/wrong-book/content
+ * Headers: X-Api-Key (可选)
+ */
+app.get('/api/wrong-book/content', async (req, res) => {
+  try {
+    const apiKey = extractApiKey(req)
+    const wrongBookPath = getUserWrongBookPath(apiKey)
+
+    let content = ''
+    let exists = false
+    let count = 0
+    try {
+      content = await fs.readFile(wrongBookPath, 'utf-8')
+      exists = true
+      const parsed = parseTable(content)
+      if (parsed) {
+        count = parsed.rows.length
+      }
+    } catch {
+      // 文件不存在
+    }
+
+    res.json({ content, exists, count })
+  } catch (error) {
+    res.status(500).json({ error: '获取错题本内容失败: ' + error.message })
+  }
+})
+
 // ============ 生产环境：静态文件服务 ============
 // 必须在所有 API 路由之后注册，避免拦截 API 请求
 

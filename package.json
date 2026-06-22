@@ -15,7 +15,8 @@
     "format": "prettier --write --experimental-cli src/",
     "start": "bun run ./server/index.js",
     "deploy": "vite build && NODE_ENV=production node ./server/index.js",
-    "deploy:win": "vite build ; $env:NODE_ENV='production' ; node ./server/index.js"
+    "deploy:win": "vite build ; $env:NODE_ENV='production' ; node ./server/index.js",
+    "dev:all": "run-p dev start"
   },
   "dependencies": {
     "cors": "^2.8.6",

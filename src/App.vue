@@ -12,6 +12,7 @@ const checking = ref(true)
 const keyInputValue = ref(apiKeyStore.apiKey)
 const keyValidating = ref(false)
 const keyValidationMsg = ref('')
+const keyValidationError = ref(false)
 const showKeyInput = ref(!apiKeyStore.configured)
 
 // 设置 API Key
@@ -19,22 +20,27 @@ async function handleSetKey() {
   const key = keyInputValue.value.trim()
   if (!key) {
     keyValidationMsg.value = '请输入 API Key'
+    keyValidationError.value = true
     return
   }
 
   keyValidating.value = true
   keyValidationMsg.value = ''
+  keyValidationError.value = false
   try {
     const result = await validateKey(key)
     if (result.valid) {
       apiKeyStore.setApiKey(key)
-      keyValidationMsg.value = '✅ API Key 验证通过'
+      keyValidationMsg.value = 'API Key 验证通过'
+      keyValidationError.value = false
       showKeyInput.value = false
     } else {
-      keyValidationMsg.value = `❌ ${result.error || 'API Key 无效'}`
+      keyValidationMsg.value = result.error || 'API Key 无效'
+      keyValidationError.value = true
     }
   } catch {
-    keyValidationMsg.value = '❌ 验证失败，无法连接到服务器'
+    keyValidationMsg.value = '验证失败，无法连接到服务器'
+    keyValidationError.value = true
   } finally {
     keyValidating.value = false
   }
@@ -45,6 +51,7 @@ function handleClearKey() {
   apiKeyStore.clearApiKey()
   keyInputValue.value = ''
   keyValidationMsg.value = ''
+  keyValidationError.value = false
   showKeyInput.value = true
 }
 
@@ -54,6 +61,7 @@ function toggleKeyInput() {
   if (showKeyInput.value) {
     keyInputValue.value = apiKeyStore.apiKey
     keyValidationMsg.value = ''
+    keyValidationError.value = false
   }
 }
 
@@ -67,46 +75,49 @@ onMounted(async () => {
 <template>
   <div class="app">
     <!-- 服务器状态栏 + API Key 配置 -->
-    <div class="server-status-bar" :class="{
-      online: serverOnline,
-      offline: !serverOnline && !checking,
+    <div class="server-bar" :class="{
+      'server-online': serverOnline && !checking,
+      'server-offline': !serverOnline && !checking,
     }">
-      <span class="status-dot" :class="{ 'dot-online': serverOnline, 'dot-offline': !serverOnline }"></span>
-      <span class="status-text">
-        <template v-if="checking">检测中...</template>
-        <template v-else-if="!serverOnline">❌ 后端服务未连接 (请启动 server/index.js)</template>
-        <template v-else-if="!apiKeyStore.configured">
-          ✅ 后端已连接 — <a href="#" class="key-action-link" @click.prevent="toggleKeyInput">点击配置你的 API Key</a>
-        </template>
-        <template v-else>
-          ✅ 已连接 · API Key 已配置
-          <a href="#" class="key-action-link" @click.prevent="toggleKeyInput">[更换]</a>
-        </template>
-      </span>
+      <div class="server-bar-indicator">
+        <span class="server-dot" :class="{ 'dot-online': serverOnline, 'dot-offline': !serverOnline && !checking }"></span>
+        <span class="server-text">
+          <template v-if="checking">检测中...</template>
+          <template v-else-if="!serverOnline">后端服务未连接</template>
+          <template v-else-if="!apiKeyStore.configured">
+            后端已连接 —
+            <a href="#" class="key-link" @click.prevent="toggleKeyInput">配置 API Key</a>
+          </template>
+          <template v-else>
+            已连接 · API Key 已配置
+            <a href="#" class="key-link" @click.prevent="toggleKeyInput">[更换]</a>
+          </template>
+        </span>
+      </div>
     </div>
 
     <!-- API Key 配置区域 -->
-    <div v-if="showKeyInput" class="api-key-section" :class="{ 'has-key': apiKeyStore.configured }">
-      <div class="api-key-row">
-        <label class="api-key-label">
-          {{ apiKeyStore.configured ? '🔄 更换 API Key' : '🔑 配置你的 DeepSeek API Key' }}
+    <div v-if="showKeyInput" class="key-section" :class="{ 'key-has': apiKeyStore.configured }">
+      <div class="key-section-inner">
+        <label class="key-label">
+          {{ apiKeyStore.configured ? '更换 API Key' : '配置 DeepSeek API Key' }}
         </label>
-        <div class="api-key-input-group">
+        <div class="key-input-row">
           <input
             v-model="keyInputValue"
             type="password"
-            class="input api-key-input"
+            class="key-input"
             placeholder="输入你的 DeepSeek API Key (sk-...)"
             @keyup.enter="handleSetKey"
           />
-          <button class="btn btn-primary" :disabled="keyValidating" @click="handleSetKey">
+          <button class="apple-btn apple-btn-primary" :disabled="keyValidating" @click="handleSetKey">
             {{ keyValidating ? '验证中...' : (apiKeyStore.configured ? '更新' : '配置') }}
           </button>
-          <button v-if="apiKeyStore.configured" class="btn btn-secondary" @click="handleClearKey">
+          <button v-if="apiKeyStore.configured" class="apple-btn apple-btn-secondary" @click="handleClearKey">
             清除
           </button>
         </div>
-        <p v-if="keyValidationMsg" class="key-validation-msg" :class="{ error: keyValidationMsg.includes('❌') }">
+        <p v-if="keyValidationMsg" class="key-msg" :class="{ 'key-msg-error': keyValidationError }">
           {{ keyValidationMsg }}
         </p>
         <p v-else class="key-hint">
@@ -121,7 +132,33 @@ onMounted(async () => {
 </template>
 
 <style>
-/* 全局样式 */
+/* ===== CSS 变量 (Apple 设计 Token) ===== */
+:root {
+  --color-bg: #ffffff;
+  --color-bg-secondary: #f2f2f7;
+  --color-bg-tertiary: #e5e5ea;
+  --color-text-primary: #1c1c1e;
+  --color-text-secondary: #8e8e93;
+  --color-text-tertiary: #aeaeb2;
+  --color-accent-blue: #007aff;
+  --color-accent-green: #34c759;
+  --color-accent-red: #ff3b30;
+  --color-accent-orange: #ff9500;
+  --color-border: #e5e5ea;
+  --color-separator: #c6c6c8;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-pill: 999px;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 2px 12px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.08);
+  --font-stack: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text',
+    'Helvetica Neue', Arial, sans-serif;
+}
+
+/* ===== 全局样式重置 ===== */
 * {
   margin: 0;
   padding: 0;
@@ -129,270 +166,253 @@ onMounted(async () => {
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
-    sans-serif;
-  background: #f5f7fa;
-  color: #333;
-  line-height: 1.6;
-  /* 防止 iOS 上输入框缩放 */
+  font-family: var(--font-stack);
+  background: var(--color-bg);
+  color: var(--color-text-primary);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   -webkit-text-size-adjust: 100%;
 }
 
 .app {
   min-height: 100vh;
   min-height: 100dvh;
-  /* 支持动态视口高度，移动端地址栏收起时填满 */
 }
 
-/* 触摸目标最小尺寸（iOS 推荐 44px） */
-.btn,
-.nav-link,
-button,
+/* 触摸目标最小尺寸 */
+.apple-btn,
+.key-link,
 input,
 select,
 textarea {
   min-height: 44px;
 }
 
-/* 小屏设备基础调整 */
-@media (max-width: 600px) {
-  body {
-    font-size: 15px;
-  }
+/* ===== 服务器状态栏 (Apple 风格) ===== */
+.server-bar {
+  display: flex;
+  align-items: center;
+  padding: 4px 16px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text-secondary);
+  user-select: none;
+  transition: background 0.3s, color 0.3s;
 }
 
-/* 大屏手机/小平板 */
-@media (min-width: 601px) and (max-width: 1024px) {
-  body {
-    font-size: 16px;
-  }
+.server-bar.server-online {
+  background: #f7fcf7;
+  color: #2c6e2c;
+  border-bottom-color: #c8e6c9;
 }
 
-/* 服务器状态栏 */
-.server-status-bar {
+.server-bar.server-offline {
+  background: #fcf7f7;
+  color: #c62828;
+  border-bottom-color: #ffcdd2;
+}
+
+.server-bar-indicator {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 16px;
-  font-size: 12px;
-  border-bottom: 1px solid #e0e0e0;
-  background: #fafafa;
-  color: #999;
-  user-select: none;
+  max-width: 800px;
+  margin: 0 auto;
+  width: 100%;
 }
 
-.server-status-bar.online {
-  background: #f1f8e9;
-  color: #558b2f;
-  border-bottom-color: #c5e1a5;
-}
-
-.server-status-bar.offline {
-  background: #fbe9e7;
-  color: #c62828;
-  border-bottom-color: #ffccbc;
-}
-
-.server-status-bar code {
-  background: rgba(0, 0, 0, 0.06);
-  padding: 1px 4px;
-  border-radius: 3px;
-  font-size: 11px;
-}
-
-.status-dot {
-  width: 8px;
-  height: 8px;
+.server-dot {
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
-  background: #ccc;
+  background: var(--color-text-tertiary);
   flex-shrink: 0;
+  transition: background 0.3s, box-shadow 0.3s;
 }
 
 .dot-online {
-  background: #4caf50;
-  box-shadow: 0 0 4px rgba(76, 175, 80, 0.5);
+  background: var(--color-accent-green);
+  box-shadow: 0 0 4px rgba(52, 199, 89, 0.5);
 }
 
 .dot-offline {
-  background: #f44336;
-  box-shadow: 0 0 4px rgba(244, 67, 54, 0.5);
+  background: var(--color-accent-red);
+  box-shadow: 0 0 4px rgba(255, 59, 48, 0.5);
 }
 
-.status-text {
+.server-text {
   flex: 1;
 }
 
-.key-action-link {
-  color: #1976d2;
-  text-decoration: underline;
+.key-link {
+  color: var(--color-accent-blue);
+  text-decoration: none;
   cursor: pointer;
+  min-height: auto;
 }
 
-/* API Key 配置区域 */
-.api-key-section {
+.key-link:hover {
+  text-decoration: underline;
+}
+
+/* ===== API Key 配置区域 (Apple 风格) ===== */
+.key-section {
   padding: 12px 16px;
-  background: #fff8e1;
-  border-bottom: 1px solid #ffe082;
+  background: #fff9e6;
+  border-bottom: 1px solid #ffe0a0;
   font-size: 13px;
 }
 
-.api-key-section.has-key {
-  background: #e8f5e9;
-  border-bottom-color: #c5e1a5;
+.key-section.key-has {
+  background: #f2faf2;
+  border-bottom-color: #c8e6c9;
 }
 
-.api-key-row {
+.key-section-inner {
   max-width: 700px;
   margin: 0 auto;
 }
 
-.api-key-label {
+.key-label {
   display: block;
-  font-weight: bold;
-  font-size: 14px;
-  color: #555;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
   margin-bottom: 8px;
 }
 
-.api-key-input-group {
+.key-input-row {
   display: flex;
   gap: 8px;
   align-items: stretch;
 }
 
-.api-key-input {
+.key-input {
   flex: 1;
   min-width: 0;
-  font-family: 'Courier New', monospace;
+  font-family: 'SF Mono', 'Courier New', monospace;
   font-size: 14px;
-}
-
-.input {
   padding: 10px 14px;
-  font-size: 14px;
-  border: 2px solid #ddd;
-  border-radius: 8px;
+  border: 1.5px solid var(--color-border);
+  border-radius: var(--radius-md);
   outline: none;
-  transition: border-color 0.2s;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  background: var(--color-bg);
+  color: var(--color-text-primary);
 }
 
-.input:focus {
-  border-color: #4a90d9;
+.key-input:focus {
+  border-color: var(--color-accent-blue);
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.15);
 }
 
-.btn {
+.key-input::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+/* ===== Apple 风格按钮 ===== */
+.apple-btn {
   padding: 10px 20px;
-  border: 2px solid #ddd;
-  border-radius: 8px;
+  border: none;
+  border-radius: var(--radius-pill);
   font-size: 14px;
+  font-weight: 500;
   cursor: pointer;
-  background: white;
+  background: var(--color-bg);
+  color: var(--color-accent-blue);
   transition: all 0.2s;
   white-space: nowrap;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-stack);
 }
 
-.btn:hover {
-  border-color: #bbb;
+.apple-btn:hover {
+  background: #f0f0f5;
 }
 
-.btn:disabled {
-  opacity: 0.6;
+.apple-btn:disabled {
+  opacity: 0.5;
   cursor: not-allowed;
 }
 
-.btn-primary {
-  background: #4a90d9;
+.apple-btn-primary {
+  background: var(--color-accent-blue);
   color: white;
-  border-color: #4a90d9;
 }
 
-.btn-primary:hover {
-  background: #357abd;
-  border-color: #357abd;
+.apple-btn-primary:hover:not(:disabled) {
+  background: #0066d6;
 }
 
-.btn-secondary {
-  background: #f5f5f5;
-  border-color: #ddd;
+.apple-btn-secondary {
+  background: var(--color-bg-secondary);
+  color: var(--color-text-primary);
 }
 
-.btn-secondary:hover {
-  background: #e0e0e0;
+.apple-btn-secondary:hover:not(:disabled) {
+  background: var(--color-bg-tertiary);
 }
 
-.key-validation-msg {
+.key-msg {
   margin-top: 8px;
   font-size: 13px;
-  color: #2e7d32;
+  color: var(--color-accent-green);
   font-weight: 500;
 }
 
-.key-validation-msg.error {
-  color: #c62828;
+.key-msg.key-msg-error {
+  color: var(--color-accent-red);
 }
 
 .key-hint {
   margin-top: 6px;
   font-size: 12px;
-  color: #999;
+  color: var(--color-text-tertiary);
   line-height: 1.5;
 }
 
-.key-link {
-  color: #1976d2;
-  text-decoration: underline;
-}
-
-/* ========================================
-   移动端适配 - App.vue
-   ======================================== */
-
+/* ===== 响应式 ===== */
 @media (max-width: 480px) {
-  .server-status-bar {
-    padding: 6px 12px;
+  .server-bar {
+    padding: 4px 12px;
     font-size: 11px;
   }
 
-  .api-key-section {
+  .key-section {
     padding: 10px 12px;
   }
 
-  .api-key-input-group {
+  .key-input-row {
     flex-direction: column;
     gap: 6px;
   }
 
-  .api-key-input {
+  .key-input {
     width: 100%;
   }
 
-  .btn {
+  .apple-btn {
     width: 100%;
     text-align: center;
     padding: 10px 16px;
     font-size: 13px;
   }
 
-  .api-key-label {
-    font-size: 13px;
+  .key-label {
+    font-size: 12px;
   }
 
   .key-hint {
     font-size: 11px;
   }
 
-  .key-validation-msg {
+  .key-msg {
     font-size: 12px;
-  }
-}
-
-@media (min-width: 481px) and (max-width: 600px) {
-  .server-status-bar {
-    padding: 6px 14px;
-  }
-
-  .api-key-section {
-    padding: 10px 14px;
   }
 }
 </style>

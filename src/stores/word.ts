@@ -167,14 +167,14 @@ export const useWordStore = defineStore('word', () => {
     saveResult.value = ''
     try {
       const result = await saveWords(words.value, totalCount.value)
-      saveResult.value = `✅ 已保存到文件: ${result.fileName}`
+      saveResult.value = `已保存到文件: ${result.fileName}`
       // 重置并清除 localStorage
       words.value = []
       step.value = 0
       clearStorage()
       return result
     } catch (err: any) {
-      saveResult.value = `❌ 保存失败: ${err.message}`
+      saveResult.value = `保存失败: ${err.message}`
       throw err
     } finally {
       saving.value = false

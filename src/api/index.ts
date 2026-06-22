@@ -220,9 +220,29 @@ export async function batchTranslate(dayKey: string): Promise<BatchTranslateResp
   return res.json()
 }
 
+export interface WrongBookContent {
+  content: string
+  exists: boolean
+  count: number
+}
+
 export interface WrongBookStatus {
   exists: boolean
   count: number
+}
+
+/**
+ * 获取错题本内容
+ */
+export async function getWrongBookContent(): Promise<WrongBookContent> {
+  const res = await fetch(`${API_BASE}/wrong-book/content`, {
+    headers: createHeaders(),
+  })
+  if (!res.ok) {
+    const err = await res.json()
+    throw new Error(err.error || '获取错题本内容失败')
+  }
+  return res.json()
 }
 
 export interface WrongBookUpdateResponse {

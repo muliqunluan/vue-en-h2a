@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, watch, nextTick, onMounted, onUnmounted, computed } from 'vue'
 import { useWordStore } from '@/stores/word'
 
 const store = useWordStore()
@@ -11,1032 +11,1436 @@ const countInputRef = ref<HTMLInputElement | null>(null)
 const showCountConfig = ref(false)
 const tempCount = ref(String(store.totalCount))
 
+// 动画状态
+const animateIn = ref(false)
+const showSourceCard = ref(false)
+const showTargetCard = ref(false)
+const showResult = ref(false)
+
 // 自动聚焦输入框
 watch(() => store.step, () => {
-    nextTick(() => {
-        inputRef.value?.focus()
+  animateIn.value = false
+  showSourceCard.value = false
+  showTargetCard.value = false
+  showResult.value = false
+  nextTick(() => {
+    inputRef.value?.focus()
+    // 触发入场动画
+    requestAnimationFrame(() => {
+      animateIn.value = true
     })
+  })
+})
+
+// 当前记录的最后一个单词
+const lastWord = computed(() => {
+  return store.words.length > 0 ? store.words[store.words.length - 1] : null
 })
 
 // 处理回车
 function handleEnter() {
-    const value = inputValue.value.trim()
-    if (!value) return
+  const value = inputValue.value.trim()
+  if (!value) return
 
-    if (store.step === 0) {
-        // 提交单词
-        store.submitWord(value)
-        inputValue.value = ''
-    } else if (store.step === 1) {
-        // 提交猜测
-        store.submitGuess(value)
-        inputValue.value = ''
-    }
+  if (store.step === 0) {
+    store.submitWord(value)
+    inputValue.value = ''
+  } else if (store.step === 1) {
+    store.submitGuess(value)
+    inputValue.value = ''
+  }
 }
 
 // 键盘事件：在 AI 结果页按 Enter 进入下一步
 function handleGlobalKeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter' && store.step === 2 && !store.checking && !store.checkError && store.checkResult) {
-        e.preventDefault()
-        store.proceedToNext()
-    }
+  if (e.key === 'Enter' && store.step === 2 && !store.checking && !store.checkError && store.checkResult) {
+    e.preventDefault()
+    store.proceedToNext()
+  }
 }
 
 onMounted(() => {
-    document.addEventListener('keydown', handleGlobalKeydown)
+  document.addEventListener('keydown', handleGlobalKeydown)
+  // 初始入场动画
+  requestAnimationFrame(() => {
+    animateIn.value = true
+  })
 })
 
 onUnmounted(() => {
-    document.removeEventListener('keydown', handleGlobalKeydown)
+  document.removeEventListener('keydown', handleGlobalKeydown)
 })
 
 // 保存到文件
 async function handleSave() {
-    try {
-        await store.saveToFile()
-    } catch {
-        // 错误已在 store 中处理
-    }
+  try {
+    await store.saveToFile()
+  } catch {
+    // 错误已在 store 中处理
+  }
 }
 
 // 设置数量
 function confirmCount() {
-    const num = parseInt(tempCount.value)
-    if (num > 0 && num <= 1000) {
-        store.setTotalCount(num)
-        showCountConfig.value = false
-    }
+  const num = parseInt(tempCount.value)
+  if (num > 0 && num <= 1000) {
+    store.setTotalCount(num)
+    showCountConfig.value = false
+  }
 }
 
 // 重置
 function handleReset() {
-    store.reset()
-    inputValue.value = ''
+  store.reset()
+  inputValue.value = ''
 }
+
+// 判断 saveResult 是否为错误
+const isSaveError = computed(() => {
+  return store.saveResult.startsWith('保存失败')
+})
 </script>
 
 <template>
-    <div class="word-input">
-        <header class="header">
-            <h1>📝 英语单词记录</h1>
-            <nav class="nav">
-                <router-link to="/docs" class="nav-link">📂 查看文档</router-link>
-            </nav>
-        </header>
+  <div class="word-input">
+    <!-- 顶部标题栏 -->
+    <header class="wi-header">
+      <div class="wi-header-left">
+        <h1 class="wi-title">英语单词</h1>
+        <span class="wi-progress-badge">{{ store.progress }}/{{ store.totalCount }}</span>
+      </div>
+      <div class="wi-header-right">
+        <button class="wi-icon-btn" @click="showCountConfig = true" title="设置目标数量">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+            <circle cx="9" cy="9" r="7.5" stroke="currentColor" stroke-width="1.5"/>
+            <path d="M9 5.5v7M5.5 9h7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <router-link to="/docs" class="wi-link">文档</router-link>
+      </div>
+    </header>
 
-        <div class="config-bar">
-            <span class="count-info">
-                目标单词数：
-                <a class="count-link" href="#" @click.prevent="showCountConfig = !showCountConfig">
-                    {{ store.totalCount }}
-                </a>
-            </span>
-            <span class="progress">当前进度：{{ store.progress }} / {{ store.totalCount }}</span>
+    <!-- 数量配置弹窗 -->
+    <div v-if="showCountConfig" class="modal-overlay" @click.self="showCountConfig = false">
+      <div class="modal-card">
+        <h3 class="modal-title">设置单词数量</h3>
+        <p class="modal-hint">每次练习的目标单词数 (1-1000)</p>
+        <input ref="countInputRef" v-model="tempCount" type="number" min="1" max="1000"
+          class="modal-input" @keyup.enter="confirmCount" />
+        <div class="modal-actions">
+          <button class="apple-btn" @click="confirmCount">确定</button>
+          <button class="apple-btn apple-btn-ghost" @click="showCountConfig = false">取消</button>
         </div>
-
-        <!-- 数量配置弹窗 -->
-        <div v-if="showCountConfig" class="modal-overlay" @click.self="showCountConfig = false">
-            <div class="modal">
-                <h3>设置单词数量</h3>
-                <input ref="countInputRef" v-model="tempCount" type="number" min="1" max="1000"
-                    class="input count-input" @keyup.enter="confirmCount" />
-                <div class="modal-actions">
-                    <button class="btn btn-primary" @click="confirmCount">确定</button>
-                    <button class="btn" @click="showCountConfig = false">取消</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- 主输入区域（步骤 0 或 1 且未完成时显示） -->
-        <div class="input-area" v-if="store.step <= 1 && !store.isComplete">
-            <div class="step-indicator">
-                <div class="step" :class="{ active: store.step === 0 }"
-                    :style="store.step === 1 ? { cursor: 'pointer' } : {}"
-                    @click="store.step === 1 && store.goBackToWord()">
-                    <span class="step-num">1</span>
-                    <span class="step-text">输入英文单词</span>
-                </div>
-                <div class="step-arrow">→</div>
-                <div class="step" :class="{ active: store.step === 1 }">
-                    <span class="step-num">2</span>
-                    <span class="step-text">输入含义猜测</span>
-                </div>
-            </div>
-
-            <div class="input-group">
-                <label class="input-label">
-                    {{ store.step === 0 ? '✏️ 请输入英文单词：' : '💭 请输入你对这个词的含义猜测：' }}
-                </label>
-                <input ref="inputRef" v-model="inputValue" type="text" class="input main-input"
-                    :placeholder="store.step === 0 ? '例如：apple' : '例如：一种水果'" @keyup.enter="handleEnter" autofocus />
-                <p class="hint">按 Enter 键提交</p>
-            </div>
-
-            <!-- 当前已输入的单词预览 -->
-            <div v-if="store.words.length > 0" class="preview">
-                <h3>已记录 ({{ store.words.length }})</h3>
-                <div class="word-list">
-                    <div v-for="(item, index) in store.words" :key="index" class="word-item"
-                        :class="{ 'item-match': item.match === '基本吻合', 'item-mismatch': item.match === '差距过大' }">
-                        <span class="word-index">#{{ index + 1 }}</span>
-                        <span class="word-en">{{ item.word }}</span>
-                        <span class="word-sep">→</span>
-                        <span class="word-guess" :class="{ 'guess-wrong': item.match === '差距过大' }">
-                            {{ item.guess }}
-                        </span>
-                        <span v-if="item.match === '差距过大' && item.meaning" class="word-correct-meaning">
-                            {{ item.meaning }}
-                        </span>
-                        <span v-if="item.match" class="word-match-badge"
-                            :class="item.match === '基本吻合' ? 'badge-ok' : 'badge-fail'">
-                            {{ item.match === '基本吻合' ? '✅' : '❌' }}
-                        </span>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- AI 检查结果 -->
-        <div v-else-if="store.step === 2" class="check-result-area">
-            <div class="step-indicator">
-                <div class="step completed">
-                    <span class="step-num">1</span>
-                    <span class="step-text">输入英文单词</span>
-                </div>
-                <div class="step-arrow">→</div>
-                <div class="step completed">
-                    <span class="step-num">2</span>
-                    <span class="step-text">输入含义猜测</span>
-                </div>
-                <div class="step-arrow">→</div>
-                <div class="step active">
-                    <span class="step-num">3</span>
-                    <span class="step-text">AI 检查结果</span>
-                </div>
-            </div>
-
-            <div class="check-card">
-                <!-- 加载中 -->
-                <div v-if="store.checking" class="check-loading">
-                    <div class="spinner"></div>
-                    <p class="check-loading-text">AI 正在分析你的答案...</p>
-                </div>
-
-                <!-- 错误 -->
-                <div v-else-if="store.checkError" class="check-error">
-                    <span class="check-error-icon">⚠️</span>
-                    <p class="check-error-text">{{ store.checkError }}</p>
-                    <button class="btn btn-primary" @click="store.proceedToNext()">跳过，继续下一个</button>
-                </div>
-
-                <!-- 结果 -->
-                <div v-else-if="store.checkResult" class="check-result">
-                    <div class="check-result-icon"
-                        :class="store.checkResult.match === '基本吻合' ? 'icon-ok' : 'icon-fail'">
-                        {{ store.checkResult.match === '基本吻合' ? '🎉' : '💪' }}
-                    </div>
-                    <div class="check-match-label"
-                        :class="store.checkResult.match === '基本吻合' ? 'label-ok' : 'label-fail'">
-                        {{ store.checkResult.match === '基本吻合' ? '基本吻合 ✓' : '差距过大 ✗' }}
-                    </div>
-
-                    <div class="check-details">
-                        <div class="check-row">
-                            <span class="check-label">你的单词</span>
-                            <span class="check-value check-word">{{ store.checkResult.word }}</span>
-                        </div>
-                        <div class="check-row">
-                            <span class="check-label">你的猜测</span>
-                            <span class="check-value check-guess">{{ store.words[store.words.length - 1]?.guess
-                                }}</span>
-                        </div>
-                        <div class="check-divider"></div>
-                        <div class="check-row">
-                            <span class="check-label">词性</span>
-                            <span class="check-value check-pos">{{ store.checkResult.pos }}</span>
-                        </div>
-                        <div class="check-row">
-                            <span class="check-label">真实含义</span>
-                            <span class="check-value check-meaning">{{ store.checkResult.meaning }}</span>
-                        </div>
-                    </div>
-
-                    <button class="btn btn-primary btn-large" @click="store.proceedToNext()">
-                        {{ store.isComplete ? '🎉 查看总结' : '➡️ 继续下一个' }}
-                    </button>
-                    <p class="hint enter-hint">按 <kbd>Enter</kbd> 继续</p>
-                </div>
-            </div>
-        </div>
-
-        <!-- 完成区域 -->
-        <div v-else class="complete-area">
-            <div class="complete-icon">🎉</div>
-            <h2>已完成 {{ store.totalCount }} 个单词的记录！</h2>
-            <div class="word-list final-list">
-                <div v-for="(item, index) in store.words" :key="index" class="word-item"
-                    :class="{ 'item-match': item.match === '基本吻合', 'item-mismatch': item.match === '差距过大' }">
-                    <span class="word-index">#{{ index + 1 }}</span>
-                    <span class="word-en">{{ item.word }}</span>
-                    <span class="word-sep">→</span>
-                    <span class="word-guess" :class="{ 'guess-wrong': item.match === '差距过大' }">
-                        {{ item.guess }}
-                    </span>
-                    <span v-if="item.match === '差距过大' && item.meaning" class="word-correct-meaning">
-                        {{ item.meaning }}
-                    </span>
-                    <span v-if="item.match" class="word-match-badge"
-                        :class="item.match === '基本吻合' ? 'badge-ok' : 'badge-fail'">
-                        {{ item.match === '基本吻合' ? '✅' : '❌' }}
-                    </span>
-                </div>
-            </div>
-
-            <div class="complete-actions">
-                <button class="btn btn-primary btn-large" :disabled="store.saving" @click="handleSave">
-                    {{ store.saving ? '⏳ 保存中...' : '💾 保存到 Markdown 文件' }}
-                </button>
-                <button class="btn btn-secondary" @click="handleReset">🔄 重新开始</button>
-            </div>
-
-            <div v-if="store.saveResult" class="save-result" :class="{ error: store.saveResult.includes('❌') }">
-                {{ store.saveResult }}
-            </div>
-        </div>
+      </div>
     </div>
+
+    <!-- ===== 步骤 0 & 1: 输入区域 ===== -->
+    <div class="wi-main" v-if="store.step <= 1 && !store.isComplete">
+      <!-- 语言指示器 (Apple 翻译 App 风格) -->
+      <div class="lang-indicator" :class="{ 'lang-shifted': store.step === 1 }">
+        <div class="lang-pill" :class="{ 'lang-active': store.step === 0, 'lang-done': store.step === 1 }">
+          <span class="lang-code">EN</span>
+          <span class="lang-name">英语</span>
+        </div>
+        <div class="lang-arrow">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div class="lang-pill" :class="{ 'lang-active': store.step === 1 }">
+          <span class="lang-code">CN</span>
+          <span class="lang-name">中文</span>
+        </div>
+      </div>
+
+      <!-- 步骤 0: 输入英文单词 -->
+      <div v-if="store.step === 0" class="input-stage" :class="{ 'animate-in': animateIn }">
+        <div class="input-card">
+          <label class="input-card-label">英文单词</label>
+          <input
+            ref="inputRef"
+            v-model="inputValue"
+            type="text"
+            class="apple-input apple-input-large"
+            placeholder="输入英文单词..."
+            @keyup.enter="handleEnter"
+            autofocus
+          />
+          <p class="input-hint">按 Enter 提交</p>
+        </div>
+      </div>
+
+      <!-- 步骤 1: 输入含义猜测 -->
+      <div v-else class="input-stage" :class="{ 'animate-in': animateIn }">
+        <!-- 源语言卡片 (显示单词) -->
+        <div class="source-card" ref="sourceCardRef">
+          <div class="source-card-label">英语</div>
+          <div class="source-card-word">{{ store.currentWord }}</div>
+        </div>
+
+        <div class="arrow-down">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+            <path d="M10 4v12M6 12l4 4 4-4" stroke="var(--color-accent-blue, #007aff)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+
+        <div class="input-card">
+          <label class="input-card-label">中文含义猜测</label>
+          <input
+            ref="inputRef"
+            v-model="inputValue"
+            type="text"
+            class="apple-input apple-input-large"
+            placeholder="猜测这个单词的含义..."
+            @keyup.enter="handleEnter"
+            autofocus
+          />
+          <p class="input-hint">按 Enter 提交猜测</p>
+        </div>
+      </div>
+
+      <!-- 已记录单词列表 (预览) -->
+      <div v-if="store.words.length > 0" class="preview-section">
+        <div class="preview-header">
+          <span class="preview-title">已记录 ({{ store.words.length }})</span>
+        </div>
+        <div class="preview-list">
+          <div
+            v-for="(item, index) in store.words"
+            :key="index"
+            class="preview-item"
+            :class="{
+              'preview-match': item.match === '基本吻合',
+              'preview-mismatch': item.match === '差距过大'
+            }"
+          >
+            <span class="preview-index">#{{ index + 1 }}</span>
+            <span class="preview-en">{{ item.word }}</span>
+            <span class="preview-arrow">
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                <path d="M2.5 6h7M6.5 3l3 3-3 3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </span>
+            <span class="preview-guess" :class="{ 'preview-guess-wrong': item.match === '差距过大' }">
+              {{ item.guess }}
+            </span>
+            <span v-if="item.match === '差距过大' && item.meaning" class="preview-correct">
+              {{ item.meaning }}
+            </span>
+            <span v-if="item.match" class="preview-badge" :class="item.match === '基本吻合' ? 'badge-ok' : 'badge-fail'">
+              {{ item.match === '基本吻合' ? 'OK' : '×' }}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== 步骤 2: AI 检查结果 (Apple 翻译 App 风格) ===== -->
+    <div v-else-if="store.step === 2" class="wi-main result-page">
+      <!-- 语言指示器 (完成版本) -->
+      <div class="lang-indicator lang-result">
+        <div class="lang-pill lang-done">
+          <span class="lang-code">EN</span>
+          <span class="lang-name">英语</span>
+        </div>
+        <div class="lang-arrow">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div class="lang-pill lang-done">
+          <span class="lang-code">CN</span>
+          <span class="lang-name">中文</span>
+        </div>
+        <div class="lang-arrow">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div class="lang-pill lang-active">
+          <span class="lang-code">AI</span>
+          <span class="lang-name">验证</span>
+        </div>
+      </div>
+
+      <div class="result-card">
+        <!-- 加载中 -->
+        <div v-if="store.checking" class="result-loading">
+          <div class="result-spinner"></div>
+          <p class="result-loading-text">AI 正在分析...</p>
+        </div>
+
+        <!-- 错误 -->
+        <div v-else-if="store.checkError" class="result-error">
+          <div class="result-error-icon">
+            <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+              <circle cx="20" cy="20" r="18" stroke="#ff3b30" stroke-width="2" fill="#fff5f5"/>
+              <path d="M20 12v10M20 26v2" stroke="#ff3b30" stroke-width="2.5" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <p class="result-error-text">{{ store.checkError }}</p>
+          <button class="apple-btn apple-btn-primary" @click="store.proceedToNext()">跳过，继续下一个</button>
+        </div>
+
+        <!-- 结果 (Apple 翻译 App 核心界面) -->
+        <div v-else-if="store.checkResult" class="result-content">
+          <!-- 源语言单词 -->
+          <div class="trans-source">
+            <div class="trans-label">英语</div>
+            <div class="trans-word">{{ store.checkResult.word }}</div>
+          </div>
+
+          <!-- 分隔箭头 -->
+          <div class="trans-divider">
+            <div class="trans-divider-line"></div>
+            <div class="trans-divider-icon">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M3 8h10M9 4l4 4-4 4" stroke="var(--color-text-tertiary, #aeaeb2)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </div>
+            <div class="trans-divider-line"></div>
+          </div>
+
+          <!-- 用户猜测 -->
+          <div class="trans-target">
+            <div class="trans-label">你的猜测</div>
+            <div class="trans-word trans-guess" :class="{ 'trans-guess-wrong': store.checkResult.match === '差距过大' }">
+              {{ lastWord?.guess || '' }}
+            </div>
+          </div>
+
+          <!-- 匹配度标签 -->
+          <div class="match-badge" :class="store.checkResult.match === '基本吻合' ? 'match-ok' : 'match-fail'">
+            <div class="match-icon">
+              <svg v-if="store.checkResult.match === '基本吻合'" width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path d="M2 7.5l3.5 3.5L12 3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <svg v-else width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path d="M3 3l8 8M11 3l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+            </div>
+            <span>{{ store.checkResult.match }}</span>
+          </div>
+
+          <!-- 真实含义部分 (Apple 翻译 App 的详细信息) -->
+          <div class="trans-details">
+            <div class="trans-details-header">
+              <span class="trans-details-label">真实含义</span>
+            </div>
+            <div class="trans-details-row">
+              <span class="trans-details-key">词性</span>
+              <span class="trans-details-value trans-pos">{{ store.checkResult.pos }}</span>
+            </div>
+            <div class="trans-details-row">
+              <span class="trans-details-key">释义</span>
+              <span class="trans-details-value trans-meaning">{{ store.checkResult.meaning }}</span>
+            </div>
+          </div>
+
+          <!-- 继续按钮 -->
+          <button class="apple-btn apple-btn-primary apple-btn-block" @click="store.proceedToNext()">
+            {{ store.isComplete ? '查看总结' : '继续下一个' }}
+          </button>
+          <p class="enter-hint">按 Enter 继续</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== 完成区域 ===== -->
+    <div v-else class="wi-main complete-page">
+      <div class="complete-card">
+        <div class="complete-icon">
+          <svg width="56" height="56" viewBox="0 0 56 56" fill="none">
+            <circle cx="28" cy="28" r="26" fill="#f0faf0" stroke="#34c759" stroke-width="2"/>
+            <path d="M18 28l7 7 13-13" stroke="#34c759" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <h2 class="complete-title">已完成 {{ store.totalCount }} 个单词</h2>
+
+        <div class="complete-stats">
+          <div class="stat-item">
+            <span class="stat-value stat-ok">{{ store.words.filter(w => w.match === '基本吻合').length }}</span>
+            <span class="stat-label">基本吻合</span>
+          </div>
+          <div class="stat-divider"></div>
+          <div class="stat-item">
+            <span class="stat-value stat-fail">{{ store.words.filter(w => w.match === '差距过大').length }}</span>
+            <span class="stat-label">差距过大</span>
+          </div>
+        </div>
+
+        <div class="complete-list">
+          <div
+            v-for="(item, index) in store.words"
+            :key="index"
+            class="complete-item"
+            :class="{ 'item-match': item.match === '基本吻合', 'item-mismatch': item.match === '差距过大' }"
+          >
+            <span class="complete-index">#{{ index + 1 }}</span>
+            <span class="complete-en">{{ item.word }}</span>
+            <span class="complete-arrow">
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                <path d="M2 5h6M5.5 2.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </span>
+            <span class="complete-guess" :class="{ 'guess-wrong': item.match === '差距过大' }">{{ item.guess }}</span>
+            <span v-if="item.match === '差距过大' && item.meaning" class="complete-correct">{{ item.meaning }}</span>
+            <span class="complete-badge" :class="item.match === '基本吻合' ? 'badge-ok' : 'badge-fail'">
+              {{ item.match === '基本吻合' ? 'OK' : '×' }}
+            </span>
+          </div>
+        </div>
+
+        <div class="complete-actions">
+          <button class="apple-btn apple-btn-primary apple-btn-block" :disabled="store.saving" @click="handleSave">
+            {{ store.saving ? '保存中...' : '保存到文件' }}
+          </button>
+          <button class="apple-btn apple-btn-secondary apple-btn-block" @click="handleReset">重新开始</button>
+        </div>
+
+        <div v-if="store.saveResult" class="save-result" :class="{ 'save-error': isSaveError }">
+          {{ store.saveResult }}
+        </div>
+      </div>
+    </div>
+  </div>
 </template>
 
 <style scoped>
+/* ===== WordInput — Apple 翻译 App 风格 ===== */
+
 .word-input {
-    max-width: 700px;
-    margin: 0 auto;
-    padding: 20px;
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 16px 20px 32px;
+  min-height: calc(100vh - 60px);
+  display: flex;
+  flex-direction: column;
 }
 
-.header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 20px;
+/* ===== 顶部标题栏 ===== */
+.wi-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
 }
 
-.header h1 {
-    margin: 0;
-    font-size: 24px;
+.wi-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
-.nav-link {
-    color: #4a90d9;
-    text-decoration: none;
-    font-size: 16px;
-    padding: 8px 16px;
-    border-radius: 6px;
-    transition: background 0.2s;
+.wi-title {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  color: var(--color-text-primary, #1c1c1e);
+  margin: 0;
 }
 
-.nav-link:hover {
-    background: #f0f4ff;
+.wi-progress-badge {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-secondary, #8e8e93);
+  background: var(--color-bg-secondary, #f2f2f7);
+  padding: 4px 12px;
+  border-radius: var(--radius-pill, 999px);
 }
 
-.config-bar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 12px 16px;
-    background: #f8f9fa;
-    border-radius: 8px;
-    margin-bottom: 24px;
-    font-size: 14px;
-    color: #666;
+.wi-header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
-.count-link {
-    color: #4a90d9;
-    font-weight: bold;
-    text-decoration: none;
-    cursor: pointer;
+.wi-icon-btn {
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 50%;
+  background: var(--color-bg-secondary, #f2f2f7);
+  color: var(--color-accent-blue, #007aff);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
 }
 
-.count-link:hover {
-    text-decoration: underline;
+.wi-icon-btn:hover {
+  background: var(--color-bg-tertiary, #e5e5ea);
 }
 
-/* 弹窗 */
+.wi-link {
+  color: var(--color-accent-blue, #007aff);
+  text-decoration: none;
+  font-size: 15px;
+  font-weight: 500;
+  padding: 8px 14px;
+  border-radius: var(--radius-pill, 999px);
+  transition: background 0.2s;
+}
+
+.wi-link:hover {
+  background: var(--color-bg-secondary, #f2f2f7);
+}
+
+/* ===== 弹窗 (Apple 风格) ===== */
 .modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.4);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 100;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
 }
 
-.modal {
-    background: white;
-    padding: 24px;
-    border-radius: 12px;
-    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.15);
-    min-width: 300px;
+.modal-card {
+  background: var(--color-bg, #ffffff);
+  padding: 28px;
+  border-radius: var(--radius-lg, 14px);
+  box-shadow: var(--shadow-lg, 0 4px 24px rgba(0,0,0,0.08));
+  min-width: 320px;
+  max-width: 90vw;
 }
 
-.modal h3 {
-    margin: 0 0 16px;
+.modal-title {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0 0 8px;
+  color: var(--color-text-primary, #1c1c1e);
 }
 
-.count-input {
-    width: 100%;
-    box-sizing: border-box;
+.modal-hint {
+  font-size: 13px;
+  color: var(--color-text-secondary, #8e8e93);
+  margin-bottom: 16px;
+}
+
+.modal-input {
+  width: 100%;
+  padding: 12px 16px;
+  font-size: 17px;
+  border: 1.5px solid var(--color-border, #e5e5ea);
+  border-radius: var(--radius-md, 12px);
+  outline: none;
+  background: var(--color-bg-secondary, #f2f2f7);
+  color: var(--color-text-primary, #1c1c1e);
+  font-family: var(--font-stack, -apple-system, sans-serif);
+  transition: border-color 0.2s, box-shadow 0.2s;
+  box-sizing: border-box;
+}
+
+.modal-input:focus {
+  border-color: var(--color-accent-blue, #007aff);
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.15);
+  background: var(--color-bg, #ffffff);
 }
 
 .modal-actions {
-    display: flex;
-    gap: 8px;
-    margin-top: 16px;
-    justify-content: flex-end;
+  display: flex;
+  gap: 10px;
+  margin-top: 20px;
+  justify-content: flex-end;
 }
 
-/* 步骤指示器 */
-.step-indicator {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 12px;
-    margin-bottom: 32px;
+.modal-actions .apple-btn {
+  min-width: 80px;
 }
 
-.step {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 16px;
-    border-radius: 20px;
-    background: #f0f0f0;
-    color: #999;
-    transition: all 0.3s;
+/* ===== 主内容区域 ===== */
+.wi-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 
-.step.active {
-    background: #4a90d9;
-    color: white;
+/* ===== 语言指示器 (Apple 翻译 App 风格) ===== */
+.lang-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 32px;
+  transition: all 0.3s;
 }
 
-.step-num {
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 13px;
-    font-weight: bold;
-    background: rgba(255, 255, 255, 0.3);
+.lang-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 18px;
+  border-radius: var(--radius-pill, 999px);
+  background: var(--color-bg-secondary, #f2f2f7);
+  color: var(--color-text-secondary, #8e8e93);
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.3s;
+  user-select: none;
 }
 
-.step.active .step-num {
-    background: rgba(255, 255, 255, 0.3);
+.lang-pill.lang-active {
+  background: var(--color-accent-blue, #007aff);
+  color: white;
+  box-shadow: 0 2px 8px rgba(0, 122, 255, 0.25);
 }
 
-.step-text {
-    font-size: 14px;
+.lang-pill.lang-done {
+  background: #e8f5e9;
+  color: #2e7d32;
 }
 
-.step-arrow {
-    color: #ccc;
-    font-size: 18px;
+.lang-code {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
 }
 
-/* 输入区域 */
-.input-area {
-    text-align: center;
+.lang-name {
+  font-size: 13px;
 }
 
-.input-group {
-    margin-bottom: 24px;
+.lang-arrow {
+  color: var(--color-text-tertiary, #aeaeb2);
+  display: flex;
+  align-items: center;
 }
 
-.input-label {
-    display: block;
-    font-size: 16px;
-    margin-bottom: 12px;
-    color: #333;
+.lang-shifted {
+  /* 步骤变化时的轻微动画 */
 }
 
-.main-input {
-    width: 100%;
-    max-width: 500px;
-    box-sizing: border-box;
+/* ===== 输入阶段 ===== */
+.input-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  opacity: 0;
+  transform: translateY(12px);
+  transition: opacity 0.35s ease, transform 0.35s ease;
 }
 
-.input {
-    padding: 12px 16px;
-    font-size: 16px;
-    border: 2px solid #ddd;
-    border-radius: 8px;
-    outline: none;
-    transition: border-color 0.2s;
+.input-stage.animate-in {
+  opacity: 1;
+  transform: translateY(0);
 }
 
-.input:focus {
-    border-color: #4a90d9;
+/* 源语言卡片 (Apple 翻译 App 的源语言显示) */
+.source-card {
+  width: 100%;
+  max-width: 420px;
+  padding: 28px 24px;
+  background: var(--color-bg-secondary, #f2f2f7);
+  border-radius: var(--radius-lg, 14px);
+  text-align: center;
+  transition: all 0.3s;
 }
 
-.hint {
-    margin-top: 8px;
-    font-size: 13px;
-    color: #999;
+.source-card-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary, #8e8e93);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin-bottom: 8px;
 }
 
-/* 预览列表 */
-.preview {
-    text-align: left;
-    margin-top: 32px;
+.source-card-word {
+  font-size: 32px;
+  font-weight: 700;
+  color: var(--color-text-primary, #1c1c1e);
+  letter-spacing: -0.5px;
+  word-break: break-word;
 }
 
-.preview h3 {
-    font-size: 16px;
-    color: #666;
-    margin-bottom: 12px;
+/* 箭头 */
+.arrow-down {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-accent-blue, #007aff);
+  animation: arrow-bounce 1.5s ease-in-out infinite;
 }
 
-.word-list {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
+@keyframes arrow-bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(4px); }
 }
 
-.word-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
-    background: #f8f9fa;
-    border-radius: 6px;
-    font-size: 14px;
+/* 输入卡片 */
+.input-card {
+  width: 100%;
+  max-width: 420px;
+  text-align: center;
 }
 
-.word-index {
-    color: #999;
-    font-size: 12px;
-    min-width: 28px;
+.input-card-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-secondary, #8e8e93);
+  margin-bottom: 10px;
 }
 
-.word-en {
-    font-weight: bold;
-    color: #333;
+/* ===== Apple 风格输入框 ===== */
+.apple-input {
+  width: 100%;
+  padding: 14px 18px;
+  font-size: 17px;
+  border: 1.5px solid var(--color-border, #e5e5ea);
+  border-radius: var(--radius-md, 12px);
+  outline: none;
+  background: var(--color-bg-secondary, #f2f2f7);
+  color: var(--color-text-primary, #1c1c1e);
+  font-family: var(--font-stack, -apple-system, sans-serif);
+  transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+  box-sizing: border-box;
 }
 
-.word-sep {
-    color: #ccc;
+.apple-input:focus {
+  border-color: var(--color-accent-blue, #007aff);
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.15);
+  background: var(--color-bg, #ffffff);
 }
 
-.word-guess {
-    color: #666;
+.apple-input::placeholder {
+  color: var(--color-text-tertiary, #aeaeb2);
 }
 
-/* 猜错时：灰色 + 删除线 */
-.guess-wrong {
-    color: #bbb !important;
-    text-decoration: line-through;
+.apple-input-large {
+  font-size: 20px;
+  padding: 16px 20px;
+  text-align: center;
 }
 
-/* 猜错后显示的正确含义 */
-.word-correct-meaning {
-    font-size: 12px;
-    color: #2e7d32;
-    font-weight: 500;
-    flex-shrink: 0;
+.input-hint {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--color-text-tertiary, #aeaeb2);
 }
 
-/* Enter 提示 */
+/* ===== 预览列表 (Apple 风格) ===== */
+.preview-section {
+  margin-top: 32px;
+  border-top: 1px solid var(--color-border, #e5e5ea);
+  padding-top: 16px;
+}
+
+.preview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.preview-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-secondary, #8e8e93);
+}
+
+.preview-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.preview-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--color-bg-secondary, #f2f2f7);
+  border-radius: var(--radius-md, 12px);
+  font-size: 14px;
+  transition: all 0.2s;
+  border-left: 3px solid transparent;
+}
+
+.preview-item.preview-match {
+  border-left-color: var(--color-accent-green, #34c759);
+}
+
+.preview-item.preview-mismatch {
+  border-left-color: var(--color-accent-red, #ff3b30);
+}
+
+.preview-index {
+  color: var(--color-text-tertiary, #aeaeb2);
+  font-size: 12px;
+  min-width: 24px;
+  font-weight: 500;
+}
+
+.preview-en {
+  font-weight: 600;
+  color: var(--color-text-primary, #1c1c1e);
+}
+
+.preview-arrow {
+  color: var(--color-text-tertiary, #aeaeb2);
+  display: flex;
+  align-items: center;
+}
+
+.preview-guess {
+  color: var(--color-text-secondary, #8e8e93);
+}
+
+.preview-guess-wrong {
+  color: var(--color-text-tertiary, #aeaeb2);
+  text-decoration: line-through;
+}
+
+.preview-correct {
+  font-size: 12px;
+  color: var(--color-accent-green, #34c759);
+  font-weight: 500;
+  margin-left: auto;
+}
+
+.preview-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill, 999px);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.badge-ok {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.badge-fail {
+  background: #fbe9e7;
+  color: #c62828;
+}
+
+/* ===== 结果页 (Apple 翻译 App 核心) ===== */
+.result-page {
+  align-items: center;
+}
+
+.lang-indicator.lang-result {
+  margin-bottom: 24px;
+}
+
+.result-card {
+  width: 100%;
+  max-width: 480px;
+  background: var(--color-bg, #ffffff);
+  border-radius: var(--radius-xl, 20px);
+  box-shadow: var(--shadow-md, 0 2px 12px rgba(0,0,0,0.06));
+  padding: 28px 24px;
+  border: 1px solid var(--color-border, #e5e5ea);
+}
+
+/* 加载 */
+.result-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 32px 0;
+}
+
+.result-spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid var(--color-border, #e5e5ea);
+  border-top-color: var(--color-accent-blue, #007aff);
+  border-radius: 50%;
+  animation: result-spin 0.7s linear infinite;
+  margin-bottom: 16px;
+}
+
+@keyframes result-spin {
+  to { transform: rotate(360deg); }
+}
+
+.result-loading-text {
+  color: var(--color-text-secondary, #8e8e93);
+  font-size: 15px;
+}
+
+/* 错误 */
+.result-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 16px 0;
+}
+
+.result-error-icon {
+  margin-bottom: 12px;
+}
+
+.result-error-text {
+  color: var(--color-accent-red, #ff3b30);
+  font-size: 14px;
+  margin-bottom: 20px;
+  text-align: center;
+}
+
+/* 结果内容 (Apple 翻译 App 风格) */
+.result-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+}
+
+/* 源语言部分 */
+.trans-source {
+  width: 100%;
+  text-align: center;
+  padding: 12px 0 8px;
+}
+
+.trans-target {
+  width: 100%;
+  text-align: center;
+  padding: 8px 0 16px;
+}
+
+.trans-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary, #8e8e93);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 4px;
+}
+
+.trans-word {
+  font-size: 32px;
+  font-weight: 700;
+  color: var(--color-text-primary, #1c1c1e);
+  letter-spacing: -0.5px;
+  line-height: 1.3;
+  word-break: break-word;
+}
+
+.trans-guess {
+  color: var(--color-text-secondary, #8e8e93);
+  font-weight: 600;
+}
+
+.trans-guess-wrong {
+  color: var(--color-text-tertiary, #aeaeb2);
+  text-decoration: line-through;
+}
+
+/* 分隔线 */
+.trans-divider {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+}
+
+.trans-divider-line {
+  flex: 1;
+  height: 1px;
+  background: var(--color-border, #e5e5ea);
+}
+
+.trans-divider-icon {
+  color: var(--color-text-tertiary, #aeaeb2);
+  display: flex;
+  align-items: center;
+}
+
+/* 匹配度标签 */
+.match-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 16px;
+  border-radius: var(--radius-pill, 999px);
+  font-size: 14px;
+  font-weight: 600;
+  margin: 4px 0 20px;
+  animation: match-pop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes match-pop {
+  0% { transform: scale(0); opacity: 0; }
+  60% { transform: scale(1.15); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.match-ok {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.match-fail {
+  background: #fbe9e7;
+  color: #c62828;
+}
+
+.match-icon {
+  display: flex;
+  align-items: center;
+}
+
+/* 真实含义详情 */
+.trans-details {
+  width: 100%;
+  background: var(--color-bg-secondary, #f2f2f7);
+  border-radius: var(--radius-md, 12px);
+  padding: 16px;
+  margin-bottom: 20px;
+}
+
+.trans-details-header {
+  margin-bottom: 12px;
+}
+
+.trans-details-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary, #8e8e93);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+.trans-details-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 6px 0;
+  gap: 12px;
+}
+
+.trans-details-key {
+  font-size: 14px;
+  color: var(--color-text-secondary, #8e8e93);
+  min-width: 50px;
+  flex-shrink: 0;
+}
+
+.trans-details-value {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--color-text-primary, #1c1c1e);
+  text-align: right;
+  flex: 1;
+}
+
+.trans-pos {
+  color: #7b1fa2;
+  font-weight: 600;
+}
+
+.trans-meaning {
+  color: var(--color-accent-blue, #007aff);
+  font-weight: 600;
+  font-size: 16px;
+}
+
+/* ===== Apple 风格按钮 ===== */
+.apple-btn {
+  padding: 12px 24px;
+  border: none;
+  border-radius: var(--radius-pill, 999px);
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  background: var(--color-bg-secondary, #f2f2f7);
+  color: var(--color-accent-blue, #007aff);
+  transition: all 0.2s;
+  white-space: nowrap;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-stack, -apple-system, sans-serif);
+}
+
+.apple-btn:hover {
+  background: var(--color-bg-tertiary, #e5e5ea);
+}
+
+.apple-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.apple-btn-primary {
+  background: var(--color-accent-blue, #007aff);
+  color: white;
+}
+
+.apple-btn-primary:hover:not(:disabled) {
+  background: #0066d6;
+}
+
+.apple-btn-secondary {
+  background: var(--color-bg-secondary, #f2f2f7);
+  color: var(--color-text-primary, #1c1c1e);
+}
+
+.apple-btn-secondary:hover:not(:disabled) {
+  background: var(--color-bg-tertiary, #e5e5ea);
+}
+
+.apple-btn-ghost {
+  background: transparent;
+  color: var(--color-text-secondary, #8e8e93);
+}
+
+.apple-btn-ghost:hover {
+  background: var(--color-bg-secondary, #f2f2f7);
+}
+
+.apple-btn-block {
+  width: 100%;
+  max-width: 300px;
+}
+
 .enter-hint {
-    margin-top: 12px;
-    font-size: 13px;
-    color: #999;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--color-text-tertiary, #aeaeb2);
+  text-align: center;
 }
 
-.enter-hint kbd {
-    display: inline-block;
-    padding: 2px 8px;
-    font-size: 12px;
-    font-family: inherit;
-    color: #555;
-    background: #f0f0f0;
-    border: 1px solid #d0d0d0;
-    border-radius: 4px;
-    box-shadow: 0 1px 0 #bbb;
-    line-height: 1.4;
+/* ===== 完成页面 ===== */
+.complete-page {
+  align-items: center;
 }
 
-/* 完成区域 */
-.complete-area {
-    text-align: center;
+.complete-card {
+  width: 100%;
+  max-width: 520px;
+  text-align: center;
 }
 
 .complete-icon {
-    font-size: 64px;
-    margin-bottom: 16px;
+  margin-bottom: 16px;
 }
 
-.complete-area h2 {
-    color: #333;
-    margin-bottom: 24px;
+.complete-title {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--color-text-primary, #1c1c1e);
+  margin-bottom: 24px;
+  letter-spacing: -0.3px;
 }
 
-.final-list {
-    max-height: 400px;
-    overflow-y: auto;
-    margin-bottom: 24px;
-    text-align: left;
+.complete-stats {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  margin-bottom: 28px;
+  padding: 16px 24px;
+  background: var(--color-bg-secondary, #f2f2f7);
+  border-radius: var(--radius-lg, 14px);
+}
+
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.stat-value {
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.stat-value.stat-ok { color: var(--color-accent-green, #34c759); }
+.stat-value.stat-fail { color: var(--color-accent-red, #ff3b30); }
+
+.stat-label {
+  font-size: 12px;
+  color: var(--color-text-secondary, #8e8e93);
+  font-weight: 500;
+}
+
+.stat-divider {
+  width: 1px;
+  height: 40px;
+  background: var(--color-border, #e5e5ea);
+}
+
+.complete-list {
+  max-height: 320px;
+  overflow-y: auto;
+  margin-bottom: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+}
+
+.complete-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--color-bg-secondary, #f2f2f7);
+  border-radius: var(--radius-md, 12px);
+  font-size: 14px;
+  border-left: 3px solid transparent;
+}
+
+.complete-item.item-match {
+  border-left-color: var(--color-accent-green, #34c759);
+}
+
+.complete-item.item-mismatch {
+  border-left-color: var(--color-accent-red, #ff3b30);
+}
+
+.complete-index {
+  color: var(--color-text-tertiary, #aeaeb2);
+  font-size: 12px;
+  min-width: 24px;
+  font-weight: 500;
+}
+
+.complete-en {
+  font-weight: 600;
+  color: var(--color-text-primary, #1c1c1e);
+}
+
+.complete-arrow {
+  color: var(--color-text-tertiary, #aeaeb2);
+  display: flex;
+  align-items: center;
+}
+
+.complete-guess {
+  color: var(--color-text-secondary, #8e8e93);
+}
+
+.complete-guess.guess-wrong {
+  color: var(--color-text-tertiary, #aeaeb2);
+  text-decoration: line-through;
+}
+
+.complete-correct {
+  font-size: 12px;
+  color: var(--color-accent-green, #34c759);
+  font-weight: 500;
+  margin-left: auto;
+}
+
+.complete-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill, 999px);
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .complete-actions {
-    display: flex;
-    gap: 12px;
-    justify-content: center;
-    margin-bottom: 16px;
-}
-
-.btn {
-    padding: 10px 20px;
-    border: 2px solid #ddd;
-    border-radius: 8px;
-    font-size: 14px;
-    cursor: pointer;
-    background: white;
-    transition: all 0.2s;
-}
-
-.btn:hover {
-    border-color: #bbb;
-}
-
-.btn:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-}
-
-.btn-primary {
-    background: #4a90d9;
-    color: white;
-    border-color: #4a90d9;
-}
-
-.btn-primary:hover {
-    background: #357abd;
-    border-color: #357abd;
-}
-
-.btn-secondary {
-    background: #f0f0f0;
-    border-color: #ddd;
-}
-
-.btn-secondary:hover {
-    background: #e0e0e0;
-}
-
-.btn-large {
-    padding: 14px 28px;
-    font-size: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 16px;
 }
 
 .save-result {
-    padding: 12px;
-    border-radius: 8px;
-    background: #e8f5e9;
-    color: #2e7d32;
-    font-size: 14px;
+  padding: 12px 16px;
+  border-radius: var(--radius-md, 12px);
+  font-size: 14px;
+  background: #f0faf0;
+  color: var(--color-accent-green, #34c759);
 }
 
-.save-result.error {
-    background: #fbe9e7;
-    color: #c62828;
-}
-
-/* ====== AI 检查结果区域 ====== */
-.check-result-area {
-    text-align: center;
-}
-
-.check-card {
-    max-width: 480px;
-    margin: 0 auto;
-    background: white;
-    border-radius: 16px;
-    padding: 32px 24px;
-    box-shadow: 0 2px 16px rgba(0, 0, 0, 0.08);
-}
-
-/* 步骤指示器 - 扩展版本 */
-.step.completed {
-    background: #e8f5e9;
-    color: #2e7d32;
-}
-
-/* 加载动画 */
-.check-loading {
-    padding: 24px 0;
-}
-
-.spinner {
-    width: 40px;
-    height: 40px;
-    border: 4px solid #e0e0e0;
-    border-top-color: #4a90d9;
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-    margin: 0 auto 16px;
-}
-
-@keyframes spin {
-    to {
-        transform: rotate(360deg);
-    }
-}
-
-.check-loading-text {
-    color: #666;
-    font-size: 15px;
-}
-
-/* 错误提示 */
-.check-error {
-    padding: 16px 0;
-}
-
-.check-error-icon {
-    font-size: 48px;
-    display: block;
-    margin-bottom: 12px;
-}
-
-.check-error-text {
-    color: #c62828;
-    font-size: 14px;
-    margin-bottom: 20px;
-}
-
-/* 结果卡片 */
-.check-result {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-}
-
-.check-result-icon {
-    font-size: 56px;
-    margin-bottom: 12px;
-    animation: pop-in 0.3s ease-out;
-}
-
-@keyframes pop-in {
-    0% {
-        transform: scale(0);
-    }
-
-    70% {
-        transform: scale(1.2);
-    }
-
-    100% {
-        transform: scale(1);
-    }
-}
-
-.check-match-label {
-    font-size: 18px;
-    font-weight: bold;
-    padding: 6px 20px;
-    border-radius: 20px;
-    margin-bottom: 24px;
-}
-
-.label-ok {
-    background: #e8f5e9;
-    color: #2e7d32;
-}
-
-.label-fail {
-    background: #fbe9e7;
-    color: #c62828;
-}
-
-.check-details {
-    width: 100%;
-    text-align: left;
-    margin-bottom: 24px;
-}
-
-.check-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 8px 0;
-}
-
-.check-label {
-    font-size: 13px;
-    color: #999;
-    min-width: 70px;
-}
-
-.check-value {
-    font-size: 15px;
-    color: #333;
-    font-weight: 500;
-    text-align: right;
-    flex: 1;
-    margin-left: 12px;
-}
-
-.check-word {
-    font-weight: bold;
-    font-size: 17px;
-    color: #1a1a1a;
-}
-
-.check-guess {
-    color: #666;
-    font-style: italic;
-}
-
-.check-pos {
-    color: #7b1fa2;
-    font-weight: bold;
-}
-
-.check-meaning {
-    color: #1565c0;
-    font-weight: bold;
-    font-size: 16px;
-}
-
-.check-divider {
-    height: 1px;
-    background: #eee;
-    margin: 8px 0;
-}
-
-/* 单词列表中的匹配标记 */
-.item-match {
-    border-left: 3px solid #4caf50 !important;
-}
-
-.item-mismatch {
-    border-left: 3px solid #f44336 !important;
-}
-
-.word-match-badge {
-    font-size: 12px;
-    margin-left: auto;
-    flex-shrink: 0;
+.save-result.save-error {
+  background: #fcf0f0;
+  color: var(--color-accent-red, #ff3b30);
 }
 
 /* ========================================
-   移动端适配 - WordInput
+   移动端适配
    ======================================== */
 
-/* 小屏手机 (<480px) */
 @media (max-width: 480px) {
-    .word-input {
-        padding: 12px;
-    }
+  .word-input {
+    padding: 12px 14px 24px;
+  }
 
-    /* --- Header --- */
-    .header {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 6px;
-        margin-bottom: 12px;
-    }
+  .wi-header {
+    margin-bottom: 16px;
+  }
 
-    .header h1 {
-        font-size: 20px;
-    }
+  .wi-title {
+    font-size: 22px;
+  }
 
-    .nav-link {
-        font-size: 14px;
-        padding: 6px 12px;
-        margin-left: 0;
-        display: inline-block;
-    }
+  .wi-progress-badge {
+    font-size: 12px;
+    padding: 3px 10px;
+  }
 
-    /* --- 配置栏 --- */
-    .config-bar {
-        flex-direction: column;
-        gap: 4px;
-        align-items: flex-start;
-        font-size: 13px;
-        padding: 8px 12px;
-        margin-bottom: 16px;
-    }
+  .lang-indicator {
+    margin-bottom: 20px;
+    gap: 6px;
+  }
 
-    /* --- 步骤指示器 --- */
-    .step-indicator {
-        flex-direction: column;
-        gap: 6px;
-        margin-bottom: 20px;
-    }
+  .lang-pill {
+    padding: 6px 14px;
+    font-size: 12px;
+  }
 
-    .step-arrow {
-        transform: rotate(90deg);
-        font-size: 14px;
-    }
+  .lang-code {
+    font-size: 11px;
+  }
 
-    .step {
-        padding: 6px 14px;
-        gap: 6px;
-    }
+  .lang-name {
+    font-size: 12px;
+  }
 
-    .step-text {
-        font-size: 12px;
-        white-space: nowrap;
-    }
+  .lang-arrow svg {
+    width: 14px;
+    height: 14px;
+  }
 
-    .step-num {
-        width: 20px;
-        height: 20px;
-        font-size: 11px;
-    }
+  .source-card {
+    padding: 20px 18px;
+  }
 
-    /* --- 输入区域 --- */
-    .input-label {
-        font-size: 14px;
-    }
+  .source-card-word {
+    font-size: 26px;
+  }
 
-    .input {
-        padding: 10px 14px;
-        font-size: 15px;
-    }
+  .apple-input-large {
+    font-size: 18px;
+    padding: 14px 16px;
+  }
 
-    .main-input {
-        max-width: 100%;
-    }
+  .input-card-label {
+    font-size: 12px;
+  }
 
-    /* --- 单词列表项 --- */
-    .word-item {
-        flex-wrap: wrap;
-        gap: 4px 8px;
-        padding: 8px 10px;
-        font-size: 13px;
-    }
+  .preview-section {
+    margin-top: 20px;
+    padding-top: 12px;
+  }
 
-    .word-index {
-        min-width: 22px;
-        font-size: 11px;
-    }
+  .preview-item {
+    padding: 8px 12px;
+    font-size: 13px;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+  }
 
-    .word-en {
-        font-size: 14px;
-    }
+  .preview-correct {
+    width: 100%;
+    margin-left: 0;
+    padding-left: 32px;
+    font-size: 11px;
+  }
 
-    .word-correct-meaning {
-        width: 100%;
-        margin-left: 0;
-        padding-left: 30px;
-        /* 对齐到单词位置 */
-        font-size: 12px;
-    }
+  .result-card {
+    padding: 20px 16px;
+    border-radius: var(--radius-lg, 14px);
+  }
 
-    .word-match-badge {
-        font-size: 11px;
-    }
+  .trans-word {
+    font-size: 26px;
+  }
 
-    /* --- AI 结果卡片 --- */
-    .check-card {
-        padding: 20px 16px;
-        border-radius: 12px;
-    }
+  .trans-details {
+    padding: 12px;
+  }
 
-    .check-result-icon {
-        font-size: 40px;
-    }
+  .trans-details-row {
+    flex-direction: column;
+    gap: 2px;
+  }
 
-    .check-match-label {
-        font-size: 15px;
-        padding: 4px 16px;
-    }
+  .trans-details-value {
+    text-align: left;
+  }
 
-    .check-row {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 2px;
-        padding: 6px 0;
-    }
+  .complete-title {
+    font-size: 20px;
+  }
 
-    .check-label {
-        font-size: 12px;
-        min-width: auto;
-    }
+  .complete-stats {
+    gap: 16px;
+    padding: 14px 18px;
+  }
 
-    .check-value {
-        text-align: left;
-        margin-left: 0;
-        font-size: 14px;
-    }
+  .stat-value {
+    font-size: 24px;
+  }
 
-    .check-word {
-        font-size: 16px;
-    }
+  .complete-item {
+    padding: 8px 12px;
+    font-size: 13px;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+  }
 
-    .check-meaning {
-        font-size: 15px;
-    }
+  .complete-correct {
+    width: 100%;
+    margin-left: 0;
+    padding-left: 32px;
+    font-size: 11px;
+  }
 
-    .check-details {
-        margin-bottom: 16px;
-    }
+  .apple-btn {
+    padding: 10px 20px;
+    font-size: 14px;
+  }
 
-    /* --- 按钮 --- */
-    .btn {
-        padding: 8px 16px;
-        font-size: 13px;
-    }
+  .apple-btn-block {
+    max-width: 100%;
+  }
 
-    .btn-large {
-        width: 100%;
-        padding: 14px 20px;
-        font-size: 15px;
-    }
+  .modal-card {
+    padding: 24px 20px;
+    min-width: auto;
+    width: calc(100% - 32px);
+  }
 
-    /* --- 完成区 --- */
-    .complete-icon {
-        font-size: 48px;
-    }
-
-    .complete-area h2 {
-        font-size: 18px;
-    }
-
-    .complete-actions {
-        flex-direction: column;
-        gap: 8px;
-    }
-
-    .final-list {
-        max-height: 300px;
-    }
-
-    /* --- 弹窗 --- */
-    .modal {
-        min-width: auto;
-        width: calc(100% - 40px);
-        margin: 0 20px;
-        padding: 20px;
-    }
-
-    .modal h3 {
-        font-size: 16px;
-    }
-
-    .count-input {
-        font-size: 15px;
-    }
+  .modal-title {
+    font-size: 18px;
+  }
 }
 
-/* 中屏手机 (480px-600px) */
 @media (min-width: 481px) and (max-width: 600px) {
-    .word-input {
-        padding: 16px;
-    }
+  .word-input {
+    padding: 14px 18px 28px;
+  }
 
-    .header h1 {
-        font-size: 22px;
-    }
+  .wi-title {
+    font-size: 24px;
+  }
 
-    .step-indicator {
-        gap: 8px;
-    }
+  .source-card-word {
+    font-size: 28px;
+  }
 
-    .step {
-        padding: 6px 12px;
-    }
+  .trans-word {
+    font-size: 28px;
+  }
 
-    .step-text {
-        font-size: 13px;
-    }
-
-    .check-card {
-        padding: 24px 20px;
-    }
-
-    .word-item {
-        flex-wrap: wrap;
-        gap: 4px 8px;
-    }
-
-    .word-correct-meaning {
-        width: 100%;
-        margin-left: 0;
-        padding-left: 30px;
-    }
-
-    .btn-large {
-        padding: 14px 24px;
-    }
+  .result-card {
+    padding: 24px 20px;
+  }
 }
 </style>
