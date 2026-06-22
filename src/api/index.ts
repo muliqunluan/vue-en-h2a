@@ -2,9 +2,37 @@
 // 部署时: VITE_API_BASE=http://your-server-ip:3001/api npm run build
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:3001/api'
 
+// localStorage 中 API Key 的存储键名（与 stores/apiKey.ts 保持一致）
+const API_KEY_STORAGE_KEY = 'vue-en-h2a-api-key'
+
+/**
+ * 从 localStorage 获取当前用户的 API Key
+ * 用于在 API 请求中自动添加 X-Api-Key 请求头
+ */
+function getApiKey(): string {
+  try {
+    return localStorage.getItem(API_KEY_STORAGE_KEY) || ''
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * 创建包含 API Key 的请求头
+ */
+function createHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  }
+  const apiKey = getApiKey()
+  if (apiKey) {
+    headers['X-Api-Key'] = apiKey
+  }
+  return headers
+}
+
 export interface HealthStatus {
   online: boolean
-  hasApiKey: boolean
 }
 
 /**
@@ -20,11 +48,32 @@ export async function checkServerHealth(): Promise<HealthStatus> {
     clearTimeout(timeoutId)
     if (res.ok) {
       const data = await res.json()
-      return { online: true, hasApiKey: !!data.hasApiKey }
+      return { online: !!data.status && data.status === 'ok' }
     }
-    return { online: false, hasApiKey: false }
+    return { online: false }
   } catch {
-    return { online: false, hasApiKey: false }
+    return { online: false }
+  }
+}
+
+export interface ValidateKeyResponse {
+  valid: boolean
+  error?: string
+}
+
+/**
+ * 验证用户提供的 API Key 是否有效
+ */
+export async function validateKey(apiKey: string): Promise<ValidateKeyResponse> {
+  try {
+    const res = await fetch(`${API_BASE}/validate-key`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apiKey }),
+    })
+    return res.json()
+  } catch {
+    return { valid: false, error: '无法连接到服务器' }
   }
 }
 
@@ -82,7 +131,7 @@ export interface BatchTranslateResponse {
 export async function saveWords(words: WordItem[], count: number): Promise<SaveWordsResponse> {
   const res = await fetch(`${API_BASE}/save-words`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: createHeaders(),
     body: JSON.stringify({ words, count }),
   })
   if (!res.ok) {
@@ -96,7 +145,9 @@ export async function saveWords(words: WordItem[], count: number): Promise<SaveW
  * 获取所有 MD 文档列表（按天分组）
  */
 export async function getDocs(): Promise<{ groups: DocGroup[] }> {
-  const res = await fetch(`${API_BASE}/docs`)
+  const res = await fetch(`${API_BASE}/docs`, {
+    headers: createHeaders(),
+  })
   if (!res.ok) {
     const err = await res.json()
     throw new Error(err.error || '获取文档列表失败')
@@ -108,7 +159,9 @@ export async function getDocs(): Promise<{ groups: DocGroup[] }> {
  * 读取单个 MD 文件内容
  */
 export async function getDocContent(fileName: string): Promise<{ fileName: string; content: string }> {
-  const res = await fetch(`${API_BASE}/docs/${encodeURIComponent(fileName)}`)
+  const res = await fetch(`${API_BASE}/docs/${encodeURIComponent(fileName)}`, {
+    headers: createHeaders(),
+  })
   if (!res.ok) {
     const err = await res.json()
     throw new Error(err.error || '读取文件失败')
@@ -122,6 +175,7 @@ export async function getDocContent(fileName: string): Promise<{ fileName: strin
 export async function translateDoc(fileName: string): Promise<TranslateResponse> {
   const res = await fetch(`${API_BASE}/docs/${encodeURIComponent(fileName)}/translate`, {
     method: 'POST',
+    headers: createHeaders(),
   })
   if (!res.ok) {
     const err = await res.json()
@@ -145,6 +199,7 @@ export interface RevertResponse {
 export async function revertDoc(fileName: string): Promise<RevertResponse> {
   const res = await fetch(`${API_BASE}/docs/${encodeURIComponent(fileName)}/revert`, {
     method: 'POST',
+    headers: createHeaders(),
   })
   if (!res.ok) {
     const err = await res.json()
@@ -156,6 +211,7 @@ export async function revertDoc(fileName: string): Promise<RevertResponse> {
 export async function batchTranslate(dayKey: string): Promise<BatchTranslateResponse> {
   const res = await fetch(`${API_BASE}/docs/batch-translate/${dayKey}`, {
     method: 'POST',
+    headers: createHeaders(),
   })
   if (!res.ok) {
     const err = await res.json()
@@ -182,6 +238,7 @@ export interface WrongBookUpdateResponse {
 export async function updateWrongBook(): Promise<WrongBookUpdateResponse> {
   const res = await fetch(`${API_BASE}/wrong-book/update`, {
     method: 'POST',
+    headers: createHeaders(),
   })
   if (!res.ok) {
     const err = await res.json()
@@ -194,7 +251,9 @@ export async function updateWrongBook(): Promise<WrongBookUpdateResponse> {
  * 获取错题本状态
  */
 export async function getWrongBookStatus(): Promise<WrongBookStatus> {
-  const res = await fetch(`${API_BASE}/wrong-book/status`)
+  const res = await fetch(`${API_BASE}/wrong-book/status`, {
+    headers: createHeaders(),
+  })
   if (!res.ok) {
     const err = await res.json()
     throw new Error(err.error || '获取错题本状态失败')
@@ -209,7 +268,7 @@ export async function getWrongBookStatus(): Promise<WrongBookStatus> {
 export async function checkWord(word: string, guess: string): Promise<CheckWordResult> {
   const res = await fetch(`${API_BASE}/check-word`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: createHeaders(),
     body: JSON.stringify({ word, guess }),
   })
   if (!res.ok) {

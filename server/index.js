@@ -2,6 +2,7 @@ import express from 'express'
 import cors from 'cors'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import dayjs from 'dayjs'
 import OpenAI from 'openai'
@@ -34,14 +35,71 @@ try {
   // .env 文件不存在，使用环境变量
 }
 
+// ============ 用户隔离工具函数 ============
+
+/**
+ * 对 API Key 做 SHA-256 哈希，取前 16 位作为用户目录名
+ * 相同 Key 始终得到相同哈希，用于用户身份识别和数据隔离
+ */
+function getUserHash(apiKey) {
+  if (!apiKey) return '_default'
+  return crypto.createHash('sha256').update(apiKey).digest('hex').substring(0, 16)
+}
+
+/**
+ * 获取用户专属的 docs 目录路径
+ * @param {string|null} apiKey - 用户的 API Key，null 则使用默认目录
+ * @returns {string} 用户文档目录路径
+ */
+function getUserDocsDir(apiKey) {
+  const hash = getUserHash(apiKey)
+  return path.resolve(__dirname, `../docs/${hash}`)
+}
+
+/**
+ * 获取用户专属的错题本文件路径
+ */
+function getUserWrongBookPath(apiKey) {
+  const userDir = getUserDocsDir(apiKey)
+  return path.join(userDir, '错题本.md')
+}
+
+/**
+ * 从请求头中提取 API Key
+ * 优先使用 X-Api-Key 请求头
+ */
+function extractApiKey(req) {
+  return req.headers['x-api-key'] || null
+}
+
+/**
+ * 获取实际用于 LLM 调用的 API Key
+ * 用户 Key 优先，兜底使用服务端 .env 配置的 DS_API_KEY
+ */
+function getEffectiveApiKey(apiKey) {
+  return apiKey || process.env.DS_API_KEY || null
+}
+
+/**
+ * 确保用户目录存在
+ */
+async function ensureUserDocsDir(apiKey) {
+  const dir = getUserDocsDir(apiKey)
+  try {
+    await fs.mkdir(dir, { recursive: true })
+  } catch {
+    // 目录已存在
+  }
+}
+
+// ============ 原有的工具函数 ============
+
 const app = express()
 // 端口：优先使用环境变量（部署时可通过 PORT=8080 node server/index.js 指定）
 const PORT = process.env.PORT || 3001
 
-// MD 文档存放目录
+// MD 文档存放根目录（默认，向后兼容）
 const DOCS_DIR = path.resolve(__dirname, '../docs')
-// 错题本文件
-const WRONG_BOOK_FILE = path.join(DOCS_DIR, '错题本.md')
 
 app.use(cors())
 app.use(express.json({ limit: '10mb' }))
@@ -72,11 +130,11 @@ function parseTable(content) {
 }
 
 /** 调用 DS API 获取单词的原意和匹配度 */
-async function callDsForMeanings(words, guesses) {
-  const apiKey = process.env.DS_API_KEY
-  if (!apiKey) throw new Error('未配置 DS_API_KEY')
+async function callDsForMeanings(words, guesses, apiKey) {
+  const effectiveKey = getEffectiveApiKey(apiKey)
+  if (!effectiveKey) throw new Error('未配置 API Key，请在页面顶部输入你的 DeepSeek API Key')
 
-  const openai = new OpenAI({ baseURL: 'https://api.deepseek.com', apiKey })
+  const openai = new OpenAI({ baseURL: 'https://api.deepseek.com', apiKey: effectiveKey })
 
   const wordList = words.map((w, i) => `${i + 1}. ${w}`).join('\n')
   const guessList = guesses.map((g, i) => `${i + 1}. ${g}`).join('\n')
@@ -117,17 +175,17 @@ ${guessList}
 }
 
 /** 调用 DS API 检查单个单词 */
-async function callDsForSingleWord(word, guess) {
-  const apiKey = process.env.DS_API_KEY
-  if (!apiKey) throw new Error('未配置 DS_API_KEY')
+async function callDsForSingleWord(word, guess, apiKey) {
+  const effectiveKey = getEffectiveApiKey(apiKey)
+  if (!effectiveKey) throw new Error('未配置 API Key，请在页面顶部输入你的 DeepSeek API Key')
 
-  const openai = new OpenAI({ baseURL: 'https://api.deepseek.com', apiKey })
+  const openai = new OpenAI({ baseURL: 'https://api.deepseek.com', apiKey: effectiveKey })
 
   const prompt = `你是一个英语教学助手。请为英文单词提供其真实的中文释义及词性信息。
 
 请严格按照 JSON 格式返回，包含以下字段：
 - "word": 英文单词
-- "pos": 词性标注（使用标准缩写：n. 名词、v. 动词、adj. 形容词、adv. 副词等）
+- "pos": 词性标注（使用标准缩写：n. 名词、v. 动词、adj. 形容词、adv. 副词、prep. 介词、pron. 代词、conj. 连词、int. 感叹词、art. 冠词、num. 数词）
 - "meaning": 该单词在词典中的标准中文释义
 - "match": 判断用户的猜测与真实原意的吻合程度，仅返回"基本吻合"或"差距过大"
   - "基本吻合"：猜测与真实原意核心含义一致或非常接近
@@ -160,13 +218,42 @@ app.get('/api/health', (_req, res) => {
   res.json({
     status: 'ok',
     timestamp: Date.now(),
-    hasApiKey: !!process.env.DS_API_KEY,
   })
+})
+
+/**
+ * 验证用户提供的 API Key 是否有效
+ * POST /api/validate-key
+ * Body: { apiKey: string }
+ */
+app.post('/api/validate-key', async (req, res) => {
+  try {
+    const { apiKey } = req.body
+    if (!apiKey) {
+      return res.status(400).json({ valid: false, error: '请提供 API Key' })
+    }
+
+    const openai = new OpenAI({ baseURL: 'https://api.deepseek.com', apiKey })
+    const completion = await openai.chat.completions.create({
+      model: 'deepseek-chat',
+      messages: [{ role: 'user', content: 'Hello' }],
+      max_tokens: 5,
+    })
+
+    if (completion.choices?.[0]?.message?.content !== undefined) {
+      res.json({ valid: true })
+    } else {
+      res.json({ valid: false, error: 'API Key 无效或已过期' })
+    }
+  } catch (error) {
+    res.json({ valid: false, error: 'API Key 验证失败: ' + (error.message || '未知错误') })
+  }
 })
 
 /**
  * 即时检查单个单词
  * POST /api/check-word
+ * Headers: X-Api-Key (可选，用户自有的 API Key)
  * Body: { word: string, guess: string }
  * Response: { word, pos, meaning, match }
  */
@@ -177,7 +264,8 @@ app.post('/api/check-word', async (req, res) => {
       return res.status(400).json({ error: '请提供 word 和 guess 参数' })
     }
 
-    const result = await callDsForSingleWord(word, guess)
+    const apiKey = extractApiKey(req)
+    const result = await callDsForSingleWord(word, guess, apiKey)
     res.json(result)
   } catch (error) {
     console.error('检查单词失败:', error)
@@ -188,6 +276,7 @@ app.post('/api/check-word', async (req, res) => {
 /**
  * 保存单词记录到 MD 文件
  * POST /api/save-words
+ * Headers: X-Api-Key (可选)
  * Body: { words: Array<{ word: string, guess: string }>, count: number }
  */
 app.post('/api/save-words', async (req, res) => {
@@ -197,9 +286,13 @@ app.post('/api/save-words', async (req, res) => {
       return res.status(400).json({ error: '无效的单词数据' })
     }
 
+    const apiKey = extractApiKey(req)
+    await ensureUserDocsDir(apiKey)
+    const userDocsDir = getUserDocsDir(apiKey)
+
     const now = dayjs()
     const fileName = `${now.format('MM-DD-HHmm')}.md`
-    const filePath = path.join(DOCS_DIR, fileName)
+    const filePath = path.join(userDocsDir, fileName)
 
     let mdContent = `# 单词记录\n\n`
     mdContent += `**记录时间**: ${now.format('YYYY-MM-DD HH:mm:ss')}\n\n`
@@ -221,17 +314,28 @@ app.post('/api/save-words', async (req, res) => {
 })
 
 /**
- * 获取所有 MD 文档列表，按天分组
+ * 获取当前用户的所有 MD 文档列表，按天分组
  * GET /api/docs
+ * Headers: X-Api-Key (可选)
  */
 app.get('/api/docs', async (req, res) => {
   try {
-    const files = await fs.readdir(DOCS_DIR)
+    const apiKey = extractApiKey(req)
+    const userDocsDir = getUserDocsDir(apiKey)
+
+    let files = []
+    try {
+      files = await fs.readdir(userDocsDir)
+    } catch {
+      // 用户目录不存在，返回空列表
+      return res.json({ groups: [] })
+    }
+
     const mdFiles = files.filter((f) => f.endsWith('.md') && f !== '错题本.md')
 
     const docs = await Promise.all(
       mdFiles.map(async (fileName) => {
-        const filePath = path.join(DOCS_DIR, fileName)
+        const filePath = path.join(userDocsDir, fileName)
         const stat = await fs.stat(filePath)
         const nameWithoutExt = fileName.replace('.md', '')
         const dayKey = nameWithoutExt.substring(0, 5)
@@ -268,14 +372,17 @@ app.get('/api/docs', async (req, res) => {
 })
 
 /**
- * 读取单个 MD 文件内容
+ * 读取当前用户指定 MD 文件内容
  * GET /api/docs/:fileName
+ * Headers: X-Api-Key (可选)
  */
 app.get('/api/docs/:fileName', async (req, res) => {
   try {
     const { fileName } = req.params
     const safeName = path.basename(fileName)
-    const filePath = path.join(DOCS_DIR, safeName)
+    const apiKey = extractApiKey(req)
+    const userDocsDir = getUserDocsDir(apiKey)
+    const filePath = path.join(userDocsDir, safeName)
     const content = await fs.readFile(filePath, 'utf-8')
     res.json({ fileName: safeName, content })
   } catch (error) {
@@ -286,12 +393,15 @@ app.get('/api/docs/:fileName', async (req, res) => {
 /**
  * 调用 DS API 为文档添加原意列 + 匹配度列
  * POST /api/docs/:fileName/translate
+ * Headers: X-Api-Key (可选)
  */
 app.post('/api/docs/:fileName/translate', async (req, res) => {
   try {
     const { fileName } = req.params
     const safeName = path.basename(fileName)
-    const filePath = path.join(DOCS_DIR, safeName)
+    const apiKey = extractApiKey(req)
+    const userDocsDir = getUserDocsDir(apiKey)
+    const filePath = path.join(userDocsDir, safeName)
 
     const content = await fs.readFile(filePath, 'utf-8')
     const parsed = parseTable(content)
@@ -307,8 +417,8 @@ app.post('/api/docs/:fileName/translate', async (req, res) => {
       return res.status(400).json({ error: '未找到英文单词' })
     }
 
-    // 调用 DS API
-    const results = await callDsForMeanings(words, guesses)
+    // 调用 DS API（传递用户 Key）
+    const results = await callDsForMeanings(words, guesses, apiKey)
 
     const meaningMap = new Map(results.map((r) => [r.word, r]))
     const newLines = [...parsed.lines]
@@ -332,7 +442,7 @@ app.post('/api/docs/:fileName/translate', async (req, res) => {
 
     const newContent = newLines.join('\n')
     const newFileName = safeName.replace('.md', '-ai.md')
-    const newFilePath = path.join(DOCS_DIR, newFileName)
+    const newFilePath = path.join(userDocsDir, newFileName)
     await fs.writeFile(newFilePath, newContent, 'utf-8')
     await fs.unlink(filePath)
 
@@ -351,12 +461,15 @@ app.post('/api/docs/:fileName/translate', async (req, res) => {
 /**
  * 还原 AI 文档（去掉原意和匹配度列，恢复为原始格式）
  * POST /api/docs/:fileName/revert
+ * Headers: X-Api-Key (可选)
  */
 app.post('/api/docs/:fileName/revert', async (req, res) => {
   try {
     const { fileName } = req.params
     const safeName = path.basename(fileName)
-    const filePath = path.join(DOCS_DIR, safeName)
+    const apiKey = extractApiKey(req)
+    const userDocsDir = getUserDocsDir(apiKey)
+    const filePath = path.join(userDocsDir, safeName)
 
     // 检查文件名是否包含 ai
     if (!safeName.toLowerCase().includes('ai')) {
@@ -387,7 +500,7 @@ app.post('/api/docs/:fileName/revert', async (req, res) => {
     const newContent = newLines.join('\n')
     // 新文件名去掉 -ai 后缀
     const newFileName = safeName.replace(/-ai\.md$/i, '.md')
-    const newFilePath = path.join(DOCS_DIR, newFileName)
+    const newFilePath = path.join(userDocsDir, newFileName)
     await fs.writeFile(newFilePath, newContent, 'utf-8')
     await fs.unlink(filePath)
 
@@ -403,13 +516,23 @@ app.post('/api/docs/:fileName/revert', async (req, res) => {
 })
 
 /**
- * 批量处理某一天的所有文档
+ * 批量处理当前用户某一天的所有文档
  * POST /api/docs/batch-translate/:dayKey
+ * Headers: X-Api-Key (可选)
  */
 app.post('/api/docs/batch-translate/:dayKey', async (req, res) => {
   try {
     const { dayKey } = req.params
-    const files = await fs.readdir(DOCS_DIR)
+    const apiKey = extractApiKey(req)
+    const userDocsDir = getUserDocsDir(apiKey)
+
+    let files = []
+    try {
+      files = await fs.readdir(userDocsDir)
+    } catch {
+      return res.json({ success: true, processed: 0, message: '该日期没有需要处理的文档' })
+    }
+
     const dayFiles = files.filter((f) => {
       return f.endsWith('.md') && f.startsWith(dayKey) && !f.toLowerCase().includes('ai') && f !== '错题本.md'
     })
@@ -422,7 +545,7 @@ app.post('/api/docs/batch-translate/:dayKey', async (req, res) => {
 
     for (const file of dayFiles) {
       try {
-        const content = await fs.readFile(path.join(DOCS_DIR, file), 'utf-8')
+        const content = await fs.readFile(path.join(userDocsDir, file), 'utf-8')
         const parsed = parseTable(content)
         if (!parsed) {
           results.push({ file, success: false, error: '未找到表格' })
@@ -437,7 +560,7 @@ app.post('/api/docs/batch-translate/:dayKey', async (req, res) => {
           continue
         }
 
-        const dsResults = await callDsForMeanings(words, guesses)
+        const dsResults = await callDsForMeanings(words, guesses, apiKey)
         const meaningMap = new Map(dsResults.map((r) => [r.word, r]))
         const newLines = [...parsed.lines]
         newLines[parsed.tableStart] = '| 序号 | 英文单词 | 我的猜测 | 原意 | 匹配度 | 词性 |'
@@ -458,8 +581,8 @@ app.post('/api/docs/batch-translate/:dayKey', async (req, res) => {
         }
 
         const newFileName = file.replace('.md', '-ai.md')
-        await fs.writeFile(path.join(DOCS_DIR, newFileName), newLines.join('\n'), 'utf-8')
-        await fs.unlink(path.join(DOCS_DIR, file))
+        await fs.writeFile(path.join(userDocsDir, newFileName), newLines.join('\n'), 'utf-8')
+        await fs.unlink(path.join(userDocsDir, file))
 
         results.push({ file, success: true })
       } catch (err) {
@@ -474,19 +597,30 @@ app.post('/api/docs/batch-translate/:dayKey', async (req, res) => {
 })
 
 /**
- * 从所有 AI 文档中提取"差距过大"的单词，生成/更新错题本
+ * 从当前用户的所有 AI 文档中提取"差距过大"的单词，生成/更新错题本
  * POST /api/wrong-book/update
+ * Headers: X-Api-Key (可选)
  */
 app.post('/api/wrong-book/update', async (req, res) => {
   try {
-    const files = await fs.readdir(DOCS_DIR)
+    const apiKey = extractApiKey(req)
+    const userDocsDir = getUserDocsDir(apiKey)
+    const wrongBookPath = getUserWrongBookPath(apiKey)
+
+    let files = []
+    try {
+      files = await fs.readdir(userDocsDir)
+    } catch {
+      return res.json({ success: true, added: 0, message: '没有找到可处理的文档' })
+    }
+
     const aiFiles = files.filter((f) => f.endsWith('.md') && f.toLowerCase().includes('ai') && f !== '错题本.md')
 
     // 从所有 AI 文档中收集错题
     const newWrongItems = [] // { word, guess, meaning, pos, source }
 
     for (const file of aiFiles) {
-      const content = await fs.readFile(path.join(DOCS_DIR, file), 'utf-8')
+      const content = await fs.readFile(path.join(userDocsDir, file), 'utf-8')
       const parsed = parseTable(content)
       if (!parsed) continue
 
@@ -517,7 +651,7 @@ app.post('/api/wrong-book/update', async (req, res) => {
     let existingItems = []
     let existingContent = ''
     try {
-      existingContent = await fs.readFile(WRONG_BOOK_FILE, 'utf-8')
+      existingContent = await fs.readFile(wrongBookPath, 'utf-8')
       const existingParsed = parseTable(existingContent)
       if (existingParsed) {
       for (const row of existingParsed.rows) {
@@ -567,7 +701,7 @@ app.post('/api/wrong-book/update', async (req, res) => {
       mdContent += `| ${index + 1} | ${item.word} | ${item.guess} | ${item.meaning} | ${item.pos || ''} | ${item.source} |\n`
     })
 
-    await fs.writeFile(WRONG_BOOK_FILE, mdContent, 'utf-8')
+    await fs.writeFile(wrongBookPath, mdContent, 'utf-8')
 
     res.json({
       success: true,
@@ -584,17 +718,21 @@ app.post('/api/wrong-book/update', async (req, res) => {
 })
 
 /**
- * 获取错题本状态
+ * 获取当前用户错题本状态
  * GET /api/wrong-book/status
+ * Headers: X-Api-Key (可选)
  */
 app.get('/api/wrong-book/status', async (req, res) => {
   try {
+    const apiKey = extractApiKey(req)
+    const wrongBookPath = getUserWrongBookPath(apiKey)
+
     let exists = false
     let count = 0
     try {
-      await fs.access(WRONG_BOOK_FILE)
+      await fs.access(wrongBookPath)
       exists = true
-      const content = await fs.readFile(WRONG_BOOK_FILE, 'utf-8')
+      const content = await fs.readFile(wrongBookPath, 'utf-8')
       const parsed = parseTable(content)
       if (parsed) {
         count = parsed.rows.length
