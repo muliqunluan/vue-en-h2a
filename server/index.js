@@ -277,7 +277,7 @@ app.post('/api/check-word', async (req, res) => {
  * 保存单词记录到 MD 文件
  * POST /api/save-words
  * Headers: X-Api-Key (可选)
- * Body: { words: Array<{ word: string, guess: string }>, count: number }
+ * Body: { words: Array<{ word: string, guess: string, meaning?: string, match?: string, pos?: string }>, count: number }
  */
 app.post('/api/save-words', async (req, res) => {
   try {
@@ -291,18 +291,37 @@ app.post('/api/save-words', async (req, res) => {
     const userDocsDir = getUserDocsDir(apiKey)
 
     const now = dayjs()
-    const fileName = `${now.format('MM-DD-HHmm')}.md`
+    // 检查是否有 AI 结果（任意单词包含 meaning 字段则视为有 AI 数据）
+    const hasAiData = words.some((item) => item.meaning)
+    const fileName = hasAiData
+      ? `${now.format('MM-DD-HHmm')}-ai.md`
+      : `${now.format('MM-DD-HHmm')}.md`
     const filePath = path.join(userDocsDir, fileName)
 
     let mdContent = `# 单词记录\n\n`
     mdContent += `**记录时间**: ${now.format('YYYY-MM-DD HH:mm:ss')}\n\n`
     mdContent += `**单词数量**: ${count}\n\n`
-    mdContent += `| 序号 | 英文单词 | 我的猜测 |\n`
-    mdContent += `| --- | --- | --- |\n`
 
-    words.forEach((item, index) => {
-      mdContent += `| ${index + 1} | ${item.word} | ${item.guess} |\n`
-    })
+    if (hasAiData) {
+      // 带 AI 结果的完整表格
+      mdContent += `| 序号 | 英文单词 | 我的猜测 | 原意 | 匹配度 | 词性 |\n`
+      mdContent += `| --- | --- | --- | --- | --- | --- |\n`
+
+      words.forEach((item, index) => {
+        const meaning = item.meaning || ''
+        const match = item.match || ''
+        const pos = item.pos || ''
+        mdContent += `| ${index + 1} | ${item.word} | ${item.guess} | ${meaning} | ${match} | ${pos} |\n`
+      })
+    } else {
+      // 原始表格（无 AI 结果）
+      mdContent += `| 序号 | 英文单词 | 我的猜测 |\n`
+      mdContent += `| --- | --- | --- |\n`
+
+      words.forEach((item, index) => {
+        mdContent += `| ${index + 1} | ${item.word} | ${item.guess} |\n`
+      })
+    }
 
     await fs.writeFile(filePath, mdContent, 'utf-8')
 

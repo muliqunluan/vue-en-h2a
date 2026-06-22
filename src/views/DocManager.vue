@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+import { marked } from 'marked'
 import { getDocs, translateDoc, revertDoc, batchTranslate, getDocContent, updateWrongBook, getWrongBookStatus } from '@/api'
 import type { DocGroup, DocInfo } from '@/api'
 
@@ -17,6 +18,16 @@ const batchProcessingDays = ref<Set<string>>(new Set())
 const previewFile = ref<string | null>(null)
 const previewContent = ref('')
 const previewLoading = ref(false)
+
+// Markdown 渲染后的 HTML 内容
+const renderedContent = computed(() => {
+    if (!previewContent.value) return ''
+    try {
+        return marked.parse(previewContent.value) as string
+    } catch {
+        return previewContent.value
+    }
+})
 
 // 错题本
 const wrongBookUpdating = ref(false)
@@ -235,7 +246,7 @@ onMounted(() => {
                     <!-- 预览区域 -->
                     <div v-if="previewFile" class="preview-area">
                         <div v-if="previewLoading" class="preview-loading">加载中...</div>
-                        <pre v-else class="preview-content">{{ previewContent }}</pre>
+                        <div v-else class="preview-content markdown-body" v-html="renderedContent"></div>
                     </div>
                 </div>
             </div>
@@ -532,13 +543,97 @@ onMounted(() => {
 }
 
 .preview-content {
-    font-size: 13px;
-    line-height: 1.6;
-    white-space: pre-wrap;
-    word-break: break-all;
-    margin: 0;
     max-height: 400px;
     overflow-y: auto;
+    margin: 0;
+}
+
+/* Markdown 渲染样式 */
+.markdown-body {
+    font-size: 14px;
+    line-height: 1.7;
+    color: #333;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3 {
+    margin: 16px 0 8px;
+    color: #1a1a1a;
+}
+
+.markdown-body h1 { font-size: 20px; }
+.markdown-body h2 { font-size: 18px; }
+.markdown-body h3 { font-size: 16px; }
+
+.markdown-body p {
+    margin: 8px 0;
+}
+
+.markdown-body strong {
+    font-weight: 600;
+}
+
+.markdown-body table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 12px 0;
+    font-size: 13px;
+}
+
+.markdown-body th,
+.markdown-body td {
+    border: 1px solid #ddd;
+    padding: 6px 10px;
+    text-align: left;
+}
+
+.markdown-body th {
+    background: #f0f0f0;
+    font-weight: 600;
+}
+
+.markdown-body tr:nth-child(even) {
+    background: #f9f9f9;
+}
+
+.markdown-body code {
+    background: #f0f0f0;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 13px;
+    font-family: 'Courier New', monospace;
+}
+
+.markdown-body pre {
+    background: #f5f5f5;
+    padding: 12px;
+    border-radius: 6px;
+    overflow-x: auto;
+}
+
+.markdown-body pre code {
+    background: none;
+    padding: 0;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+    padding-left: 24px;
+    margin: 8px 0;
+}
+
+.markdown-body li {
+    margin: 4px 0;
+}
+
+.markdown-body a {
+    color: #4a90d9;
+    text-decoration: none;
+}
+
+.markdown-body a:hover {
+    text-decoration: underline;
 }
 
 /* ========================================

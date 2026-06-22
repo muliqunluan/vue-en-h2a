@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, nextTick } from 'vue'
+import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useWordStore } from '@/stores/word'
 
 const store = useWordStore()
@@ -27,12 +27,28 @@ function handleEnter() {
         // 提交单词
         store.submitWord(value)
         inputValue.value = ''
-    } else {
+    } else if (store.step === 1) {
         // 提交猜测
         store.submitGuess(value)
         inputValue.value = ''
     }
 }
+
+// 键盘事件：在 AI 结果页按 Enter 进入下一步
+function handleGlobalKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter' && store.step === 2 && !store.checking && !store.checkError && store.checkResult) {
+        e.preventDefault()
+        store.proceedToNext()
+    }
+}
+
+onMounted(() => {
+    document.addEventListener('keydown', handleGlobalKeydown)
+})
+
+onUnmounted(() => {
+    document.removeEventListener('keydown', handleGlobalKeydown)
+})
 
 // 保存到文件
 async function handleSave() {
@@ -125,7 +141,12 @@ function handleReset() {
                         <span class="word-index">#{{ index + 1 }}</span>
                         <span class="word-en">{{ item.word }}</span>
                         <span class="word-sep">→</span>
-                        <span class="word-guess">{{ item.guess }}</span>
+                        <span class="word-guess" :class="{ 'guess-wrong': item.match === '差距过大' }">
+                            {{ item.guess }}
+                        </span>
+                        <span v-if="item.match === '差距过大' && item.meaning" class="word-correct-meaning">
+                            {{ item.meaning }}
+                        </span>
                         <span v-if="item.match" class="word-match-badge"
                             :class="item.match === '基本吻合' ? 'badge-ok' : 'badge-fail'">
                             {{ item.match === '基本吻合' ? '✅' : '❌' }}
@@ -203,6 +224,7 @@ function handleReset() {
                     <button class="btn btn-primary btn-large" @click="store.proceedToNext()">
                         {{ store.isComplete ? '🎉 查看总结' : '➡️ 继续下一个' }}
                     </button>
+                    <p class="hint enter-hint">按 <kbd>Enter</kbd> 继续</p>
                 </div>
             </div>
         </div>
@@ -217,12 +239,16 @@ function handleReset() {
                     <span class="word-index">#{{ index + 1 }}</span>
                     <span class="word-en">{{ item.word }}</span>
                     <span class="word-sep">→</span>
-                    <span class="word-guess">{{ item.guess }}</span>
+                    <span class="word-guess" :class="{ 'guess-wrong': item.match === '差距过大' }">
+                        {{ item.guess }}
+                    </span>
+                    <span v-if="item.match === '差距过大' && item.meaning" class="word-correct-meaning">
+                        {{ item.meaning }}
+                    </span>
                     <span v-if="item.match" class="word-match-badge"
                         :class="item.match === '基本吻合' ? 'badge-ok' : 'badge-fail'">
                         {{ item.match === '基本吻合' ? '✅' : '❌' }}
                     </span>
-                    <span v-if="item.meaning" class="word-meaning">{{ item.meaning }}</span>
                 </div>
             </div>
 
@@ -469,6 +495,40 @@ function handleReset() {
 
 .word-guess {
     color: #666;
+}
+
+/* 猜错时：灰色 + 删除线 */
+.guess-wrong {
+    color: #bbb !important;
+    text-decoration: line-through;
+}
+
+/* 猜错后显示的正确含义 */
+.word-correct-meaning {
+    font-size: 12px;
+    color: #2e7d32;
+    font-weight: 500;
+    flex-shrink: 0;
+}
+
+/* Enter 提示 */
+.enter-hint {
+    margin-top: 12px;
+    font-size: 13px;
+    color: #999;
+}
+
+.enter-hint kbd {
+    display: inline-block;
+    padding: 2px 8px;
+    font-size: 12px;
+    font-family: inherit;
+    color: #555;
+    background: #f0f0f0;
+    border: 1px solid #d0d0d0;
+    border-radius: 4px;
+    box-shadow: 0 1px 0 #bbb;
+    line-height: 1.4;
 }
 
 /* 完成区域 */
@@ -736,13 +796,6 @@ function handleReset() {
     flex-shrink: 0;
 }
 
-.word-meaning {
-    font-size: 12px;
-    color: #1565c0;
-    margin-left: 4px;
-    flex-shrink: 0;
-}
-
 /* ========================================
    移动端适配 - WordInput
    ======================================== */
@@ -841,13 +894,12 @@ function handleReset() {
         font-size: 14px;
     }
 
-    .word-meaning {
+    .word-correct-meaning {
         width: 100%;
         margin-left: 0;
         padding-left: 30px;
         /* 对齐到单词位置 */
         font-size: 12px;
-        color: #1565c0;
     }
 
     .word-match-badge {
@@ -977,7 +1029,7 @@ function handleReset() {
         gap: 4px 8px;
     }
 
-    .word-meaning {
+    .word-correct-meaning {
         width: 100%;
         margin-left: 0;
         padding-left: 30px;
