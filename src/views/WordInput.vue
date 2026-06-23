@@ -172,18 +172,6 @@ const isSaveError = computed(() => {
 
       <!-- 步骤 1: 输入含义猜测 -->
       <div v-else class="input-stage" :class="{ 'animate-in': animateIn }">
-        <!-- 源语言卡片 (显示单词) -->
-        <div class="source-card" ref="sourceCardRef">
-          <div class="source-card-label">英语</div>
-          <div class="source-card-word">{{ store.currentWord }}</div>
-        </div>
-
-        <div class="arrow-down">
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-            <path d="M10 4v12M6 12l4 4 4-4" stroke="var(--color-accent-blue, #007aff)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        </div>
-
         <div class="input-card">
           <label class="input-card-label">中文含义猜测</label>
           <input
@@ -224,12 +212,14 @@ const isSaveError = computed(() => {
             <span class="preview-guess" :class="{ 'preview-guess-wrong': item.match === '差距过大' }">
               {{ item.guess }}
             </span>
-            <span v-if="item.match === '差距过大' && item.meaning" class="preview-correct">
-              {{ item.meaning }}
-            </span>
-            <span v-if="item.match" class="preview-badge" :class="item.match === '基本吻合' ? 'badge-ok' : 'badge-fail'">
-              {{ item.match === '基本吻合' ? 'OK' : '×' }}
-            </span>
+            <template v-if="item.match === '差距过大' && item.meaning">
+              <span class="preview-arrow preview-arrow-sm">
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                  <path d="M2 5h6M5.5 2.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </span>
+              <span class="preview-correct">{{ item.meaning }}</span>
+            </template>
           </div>
         </div>
       </div>
@@ -634,48 +624,6 @@ const isSaveError = computed(() => {
   transform: translateY(0);
 }
 
-/* 源语言卡片 (Apple 翻译 App 的源语言显示) */
-.source-card {
-  width: 100%;
-  max-width: 420px;
-  padding: 28px 24px;
-  background: var(--color-bg-secondary, #f2f2f7);
-  border-radius: var(--radius-lg, 14px);
-  text-align: center;
-  transition: all 0.3s;
-}
-
-.source-card-label {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--color-text-secondary, #8e8e93);
-  text-transform: uppercase;
-  letter-spacing: 0.8px;
-  margin-bottom: 8px;
-}
-
-.source-card-word {
-  font-size: 32px;
-  font-weight: 700;
-  color: var(--color-text-primary, #1c1c1e);
-  letter-spacing: -0.5px;
-  word-break: break-word;
-}
-
-/* 箭头 */
-.arrow-down {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--color-accent-blue, #007aff);
-  animation: arrow-bounce 1.5s ease-in-out infinite;
-}
-
-@keyframes arrow-bounce {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(4px); }
-}
-
 /* 输入卡片 */
 .input-card {
   width: 100%;
@@ -751,27 +699,20 @@ const isSaveError = computed(() => {
 .preview-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
 }
 
 .preview-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 14px;
-  background: var(--color-bg-secondary, #f2f2f7);
+  padding: 12px 14px;
+  background: var(--color-bg, #ffffff);
   border-radius: var(--radius-md, 12px);
   font-size: 14px;
   transition: all 0.2s;
-  border-left: 3px solid transparent;
-}
-
-.preview-item.preview-match {
-  border-left-color: var(--color-accent-green, #34c759);
-}
-
-.preview-item.preview-mismatch {
-  border-left-color: var(--color-accent-red, #ff3b30);
+  border: 1px solid var(--color-border, #e5e5ea);
+  box-shadow: var(--shadow-sm, 0 1px 3px rgba(0,0,0,0.04));
 }
 
 .preview-index {
@@ -790,10 +731,18 @@ const isSaveError = computed(() => {
   color: var(--color-text-tertiary, #aeaeb2);
   display: flex;
   align-items: center;
+  flex-shrink: 0;
+}
+
+.preview-arrow-sm {
+  display: flex;
+  align-items: center;
+  color: var(--color-text-tertiary, #aeaeb2);
+  flex-shrink: 0;
 }
 
 .preview-guess {
-  color: var(--color-text-secondary, #8e8e93);
+  color: var(--color-text-primary, #1c1c1e);
 }
 
 .preview-guess-wrong {
@@ -803,28 +752,9 @@ const isSaveError = computed(() => {
 
 .preview-correct {
   font-size: 12px;
-  color: var(--color-accent-green, #34c759);
+  color: var(--color-accent-blue, #007aff);
   font-weight: 500;
-  margin-left: auto;
-}
-
-.preview-badge {
-  font-size: 11px;
-  font-weight: 700;
-  padding: 2px 8px;
-  border-radius: var(--radius-pill, 999px);
-  margin-left: auto;
   flex-shrink: 0;
-}
-
-.badge-ok {
-  background: #e8f5e9;
-  color: #2e7d32;
-}
-
-.badge-fail {
-  background: #fbe9e7;
-  color: #c62828;
 }
 
 /* ===== 结果页 (Apple 翻译 App 核心) ===== */
@@ -1251,6 +1181,16 @@ const isSaveError = computed(() => {
   flex-shrink: 0;
 }
 
+.badge-ok {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.badge-fail {
+  background: #fbe9e7;
+  color: #c62828;
+}
+
 .complete-actions {
   display: flex;
   flex-direction: column;
@@ -1317,14 +1257,6 @@ const isSaveError = computed(() => {
     height: 14px;
   }
 
-  .source-card {
-    padding: 20px 18px;
-  }
-
-  .source-card-word {
-    font-size: 26px;
-  }
-
   .apple-input-large {
     font-size: 18px;
     padding: 14px 16px;
@@ -1340,16 +1272,14 @@ const isSaveError = computed(() => {
   }
 
   .preview-item {
-    padding: 8px 12px;
+    padding: 10px 12px;
     font-size: 13px;
     flex-wrap: wrap;
     gap: 4px 8px;
+    width: 100%;
   }
 
   .preview-correct {
-    width: 100%;
-    margin-left: 0;
-    padding-left: 32px;
     font-size: 11px;
   }
 
@@ -1422,6 +1352,12 @@ const isSaveError = computed(() => {
   }
 }
 
+@media (max-width: 480px) {
+  .enter-hint {
+    display: none;
+  }
+}
+
 @media (min-width: 481px) and (max-width: 600px) {
   .word-input {
     padding: 14px 18px 28px;
@@ -1429,10 +1365,6 @@ const isSaveError = computed(() => {
 
   .wi-title {
     font-size: 24px;
-  }
-
-  .source-card-word {
-    font-size: 28px;
   }
 
   .trans-word {

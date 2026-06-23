@@ -1,6 +1,12 @@
-// API 基础地址：优先使用 Vite 构建时注入的环境变量，否则默认本地开发地址
-// 部署时: VITE_API_BASE=http://your-server-ip:3001/api npm run build
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:3001/api'
+/**
+ * API 基础地址
+ * - 开发环境 (Vite dev server): 使用 localhost:3001 连接后端
+ * - 生产环境 (Express 托管): 使用相对路径 /api，同域访问
+ * 无需再通过 VITE_API_BASE 环境变量配置，构建后直接部署即可
+ */
+const API_BASE = import.meta.env.DEV
+  ? 'http://localhost:3001/api'
+  : '/api'
 
 // localStorage 中 API Key 的存储键名（与 stores/apiKey.ts 保持一致）
 const API_KEY_STORAGE_KEY = 'vue-en-h2a-api-key'
